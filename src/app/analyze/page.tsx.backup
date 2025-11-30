@@ -1,0 +1,609 @@
+'use client';
+
+import { useState } from 'react';
+import VideoUpload from '@/components/VideoUpload';
+import { identifyParticipants, deepAnalysis, Participant, AnalysisResult } from '@/lib/gemini';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useRouter } from 'next/navigation';
+import { defaultPrompts } from '@/lib/defaultPrompts';
+import PromptEditorModal from '@/components/PromptEditorModal';
+
+type AnalysisStep = 'upload' | 'identify' | 'analyzing' | 'results';
+
+export default function AnalyzePage() {
+    const router = useRouter();
+    const [step, setStep] = useState<AnalysisStep>('upload');
+    const [videoFile, setVideoFile] = useState<File | null>(null);
+    const [participants, setParticipants] = useState<Participant[]>([]);
+    const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    // For re-analysis
+    const [savedVideoFile, setSavedVideoFile] = useState<File | null>(null);
+    const [savedParticipants, setSavedParticipants] = useState<Participant[]>([]);
+    const [currentUserType, setCurrentUserType] = useState<string>('family');
+
+    // Handle video upload complete
+    const handleUploadComplete = async (file: File) => {
+        setVideoFile(file);
+        setSavedVideoFile(file);
+        setStep('identify');
+        setLoading(true);
+
+        try {
+            const foundParticipants = await identifyParticipants(file);
+            setParticipants(foundParticipants);
+            setSavedParticipants(foundParticipants);
+            setLoading(false);
+        } catch (error) {
+            console.error('❌ Participant identification failed:', error);
+            const defaultParticipants = [
+                { id: 'person_1', name: 'משתתף 1', role: 'parent' },
+                { id: 'person_2', name: 'משתתף 2', role: 'child' }
+            ];
+            setParticipants(defaultParticipants);
+            setSavedParticipants(defaultParticipants);
+            setLoading(false);
+        }
+    };
+
+    // Start analysis
+    const handleStartAnalysis = async () => {
+        if (!videoFile) return;
+        await runAnalysis(videoFile, participants);
+    };
+
+    // Run analysis
+    const runAnalysis = async (file: File, parts: Participant[]) => {
+        setStep('analyzing');
+        setLoading(true);
+        setError(null);
+
+        try {
+            const userType = (localStorage.getItem('userType') as any) || 'family';
+            setCurrentUserType(userType);
+            const customPromptsKey = `customPrompts_${userType}`;
+            const saved = localStorage.getItem(customPromptsKey);
+            const customPrompts = saved ? JSON.parse(saved) : defaultPrompts[userType];
+
+            console.log('🧠 Starting analysis with prompts:', customPrompts);
+
+            const result = await deepAnalysis(file, parts, customPrompts);
+            setAnalysisResult(result);
+            setLoading(false);
+            setStep('results');
+        } catch (error: any) {
+            console.error('❌ Analysis failed:', error);
+            setLoading(false);
+            setError(error?.message || 'שגיאה לא ידועה בניתוח');
+        }
+    };
+
+    // Re-analyze with new prompts
+    const handleReanalyze = async (newUserType: string, newPrompts: any) => {
+        localStorage.setItem('userType', newUserType);
+        const key = `customPrompts_${newUserType}`;
+        localStorage.setItem(key, JSON.stringify(newPrompts));
+        setCurrentUserType(newUserType);
+
+        setStep('analyzing');
+        setLoading(true);
+        setError(null);
+
+        try {
+            console.log('🔄 Re-analyzing with new prompts');
+            const result = await deepAnalysis(savedVideoFile!, savedParticipants, newPrompts);
+            setAnalysisResult(result);
+            setLoading(false);
+            setStep('results');
+        } catch (error: any) {
+            console.error('❌ Re-analysis failed:', error);
+            setLoading(false);
+            setError(error?.message || 'שגיאה בניתוח חוזר');
+        }
+    };
+
+    const goBack = () => {
+        const steps: AnalysisStep[] = ['upload', 'identify', 'analyzing', 'results'];
+        const currentIndex = steps.indexOf(step);
+        if (currentIndex > 0) {
+            setStep(steps[currentIndex - 1]);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-800 via-cyan-900 to-blue-900 p-4">
+            <div className="max-w-6xl mx-auto">
+                <div className="bg-white rounded-3xl shadow-2xl p-6 mb-6">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-3xl font-bold text-gray-800 mb-2">🎬 ניתוח וידאו</h1>
+                            <p className="text-gray-600">מערכת ניתוח Gemini AI מתקדמת</p>
+                        </div>
+                        {step !== 'upload' && (
+                            <button
+                                onClick={goBack}
+                                className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-all"
+                            >
+                                ← חזרה
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                <AnimatePresence mode="wait">
+                    {step === 'upload' && (
+                        <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                            <VideoUpload onUploadComplete={handleUploadComplete} />
+                        </motion.div>
+                    )}
+
+                    {step === 'identify' && (
+                        <ParticipantIdentificationView
+                            participants={participants}
+                            loading={loading}
+                            onStartAnalysis={handleStartAnalysis}
+                        />
+                    )}
+
+                    {step === 'analyzing' && (
+                        <AnalyzingView
+                            loading={loading}
+                            error={error}
+                            onRetry={handleStartAnalysis}
+                        />
+                    )}
+
+                    {step === 'results' && analysisResult && (
+                        <ResultsView
+                            result={analysisResult}
+                            currentUserType={currentUserType}
+                            onReanalyze={handleReanalyze}
+                        />
+                    )}
+                </AnimatePresence>
+            </div>
+        </div>
+    );
+}
+
+// Participant Identification View
+function ParticipantIdentificationView({
+    participants,
+    loading,
+    onStartAnalysis
+}: {
+    participants: Participant[];
+    loading: boolean;
+    onStartAnalysis: () => void;
+}) {
+    return (
+        <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-3xl p-12"
+        >
+            <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">👥 זיהוי משתתפים</h2>
+            {loading ? (
+                <div className="text-center">
+                    <div className="text-6xl mb-4">🔍</div>
+                    <p className="text-gray-600 text-lg">מזהה אנשים בוידאו...</p>
+                </div>
+            ) : (
+                <>
+                    <div className="bg-cyan-50 border-2 border-cyan-200 rounded-2xl p-6 mb-8">
+                        <p className="text-xl font-bold text-gray-800 text-center mb-4">
+                            זיהינו {participants.length} משתתפים
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {participants.map((p, i) => (
+                                <div key={i} className="bg-white border border-cyan-300 rounded-xl p-4 text-center">
+                                    <div className="text-4xl mb-2">👤</div>
+                                    <h4 className="font-bold text-gray-800">{p.name}</h4>
+                                    {p.age && <p className="text-sm text-gray-600">גיל: {p.age}</p>}
+                                    {p.notes && <p className="text-xs text-gray-500 mt-1" dir="rtl">{p.notes}</p>}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="text-center">
+                        <button
+                            onClick={onStartAnalysis}
+                            className="px-12 py-4 bg-gradient-to-l from-cyan-500 to-orange-500 text-white rounded-xl font-bold text-lg hover:from-cyan-600 hover:to-orange-600 transition-all shadow-lg"
+                        >
+                            🧠 התחל ניתוח מעמיק
+                        </button>
+                    </div>
+                </>
+            )}
+        </motion.div>
+    );
+}
+
+// Analyzing View
+function AnalyzingView({ loading, error, onRetry }: { loading: boolean; error: string | null; onRetry: () => void }) {
+    if (error) {
+        return (
+            <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-white rounded-3xl p-12 text-center"
+            >
+                <div className="text-8xl mb-6">❌</div>
+                <h2 className="text-3xl font-bold text-gray-800 mb-4">שגיאה בניתוח</h2>
+                <p className="text-gray-700 text-lg mb-6" dir="rtl">{error}</p>
+                <p className="text-gray-600 text-sm mb-8">בדוק את ה-Console (F12) לפרטים נוספים</p>
+                <button
+                    onClick={onRetry}
+                    className="px-8 py-4 bg-gradient-to-l from-cyan-500 to-orange-500 text-white rounded-xl font-bold hover:from-cyan-600 hover:to-orange-600 transition-all shadow-lg"
+                >
+                    🔄 נסה שוב
+                </button>
+            </motion.div>
+        );
+    }
+
+    return (
+        <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-3xl p-12 text-center"
+        >
+            <div className="animate-pulse text-8xl mb-6">🧠</div>
+            <h2 className="text-3xl font-bold text-gray-800 mb-4">מבצע ניתוח מעמיק...</h2>
+            <p className="text-gray-600 text-lg mb-6">
+                Gemini AI מנתח את הסרטון לפי הפרומפטים המותאמים אישית שלך
+            </p>
+            <div className="flex justify-center">
+                <div className="w-64 h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <motion.div
+                        className="h-full bg-gradient-to-l from-cyan-500 to-orange-500"
+                        initial={{ width: '0%' }}
+                        animate={{ width: '100%' }}
+                        transition={{ duration: 3, repeat: Infinity }}
+                    />
+                </div>
+                const result = await deepAnalysis(file, parts, customPrompts);
+                setAnalysisResult(result);
+                setLoading(false);
+                setStep('results');
+        } catch (error: any) {
+                    console.error('❌ Analysis failed:', error);
+                setLoading(false);
+                setError(error?.message || 'שגיאה לא ידועה בניתוח');
+        }
+    };
+
+    // Re-analyze with new prompts
+    const handleReanalyze = async (newUserType: string, newPrompts: any) => {
+                    localStorage.setItem('userType', newUserType);
+                const key = `customPrompts_${newUserType}`;
+                localStorage.setItem(key, JSON.stringify(newPrompts));
+                setCurrentUserType(newUserType);
+
+                setStep('analyzing');
+                setLoading(true);
+                setError(null);
+
+                try {
+                    console.log('🔄 Re-analyzing with new prompts');
+                const result = await deepAnalysis(savedVideoFile!, savedParticipants, newPrompts);
+                setAnalysisResult(result);
+                setLoading(false);
+                setStep('results');
+        } catch (error: any) {
+                    console.error('❌ Re-analysis failed:', error);
+                setLoading(false);
+                setError(error?.message || 'שגיאה בניתוח חוזר');
+        }
+    };
+
+    const goBack = () => {
+        const steps: AnalysisStep[] = ['upload', 'identify', 'analyzing', 'results'];
+                const currentIndex = steps.indexOf(step);
+        if (currentIndex > 0) {
+                    setStep(steps[currentIndex - 1]);
+        }
+    };
+
+                return (
+                <div className="min-h-screen bg-gradient-to-br from-slate-800 via-cyan-900 to-blue-900 p-4">
+                    <div className="max-w-6xl mx-auto">
+                        <div className="bg-white rounded-3xl shadow-2xl p-6 mb-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h1 className="text-3xl font-bold text-gray-800 mb-2">🎬 ניתוח וידאו</h1>
+                                    <p className="text-gray-600">מערכת ניתוח Gemini AI מתקדמת</p>
+                                </div>
+                                {step !== 'upload' && (
+                                    <button
+                                        onClick={goBack}
+                                        className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-all"
+                                    >
+                                        ← חזרה
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <AnimatePresence mode="wait">
+                            {step === 'upload' && (
+                                <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                    <VideoUpload onUploadComplete={handleUploadComplete} />
+                                </motion.div>
+                            )}
+
+                            {step === 'identify' && (
+                                <ParticipantIdentificationView
+                                    participants={participants}
+                                    loading={loading}
+                                    onStartAnalysis={handleStartAnalysis}
+                                />
+                            )}
+
+                            {step === 'analyzing' && (
+                                <AnalyzingView
+                                    loading={loading}
+                                    error={error}
+                                    onRetry={handleStartAnalysis}
+                                />
+                            )}
+
+                            {step === 'results' && analysisResult && (
+                                <ResultsView
+                                    result={analysisResult}
+                                    currentUserType={currentUserType}
+                                    onReanalyze={handleReanalyze}
+                                />
+                            )}
+                        </AnimatePresence>
+                    </div>
+                </div>
+                );
+}
+
+                // Participant Identification View
+                function ParticipantIdentificationView({
+                    participants,
+                    loading,
+                    onStartAnalysis
+                }: {
+                    participants: Participant[];
+                loading: boolean;
+    onStartAnalysis: () => void;
+}) {
+    return (
+                <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="bg-white rounded-3xl p-12"
+                >
+                    <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">👥 זיהוי משתתפים</h2>
+                    {loading ? (
+                        <div className="text-center">
+                            <div className="text-6xl mb-4">🔍</div>
+                            <p className="text-gray-600 text-lg">מזהה אנשים בוידאו...</p>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="bg-cyan-50 border-2 border-cyan-200 rounded-2xl p-6 mb-8">
+                                <p className="text-xl font-bold text-gray-800 text-center mb-4">
+                                    זיהינו {participants.length} משתתפים
+                                </p>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {participants.map((p, i) => (
+                                        <div key={i} className="bg-white border border-cyan-300 rounded-xl p-4 text-center">
+                                            <div className="text-4xl mb-2">👤</div>
+                                            <h4 className="font-bold text-gray-800">{p.name}</h4>
+                                            {p.age && <p className="text-sm text-gray-600">גיל: {p.age}</p>}
+                                            {p.notes && <p className="text-xs text-gray-500 mt-1" dir="rtl">{p.notes}</p>}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="text-center">
+                                <button
+                                    onClick={onStartAnalysis}
+                                    className="px-12 py-4 bg-gradient-to-l from-cyan-500 to-orange-500 text-white rounded-xl font-bold text-lg hover:from-cyan-600 hover:to-orange-600 transition-all shadow-lg"
+                                >
+                                    🧠 התחל ניתוח מעמיק
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </motion.div>
+                );
+}
+
+                // Analyzing View
+                function AnalyzingView({loading, error, onRetry}: {loading: boolean; error: string | null; onRetry: () => void }) {
+    if (error) {
+        return (
+                <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="bg-white rounded-3xl p-12 text-center"
+                >
+                    <div className="text-8xl mb-6">❌</div>
+                    <h2 className="text-3xl font-bold text-gray-800 mb-4">שגיאה בניתוח</h2>
+                    <p className="text-gray-700 text-lg mb-6" dir="rtl">{error}</p>
+                    <p className="text-gray-600 text-sm mb-8">בדוק את ה-Console (F12) לפרטים נוספים</p>
+                    <button
+                        onClick={onRetry}
+                        className="px-8 py-4 bg-gradient-to-l from-cyan-500 to-orange-500 text-white rounded-xl font-bold hover:from-cyan-600 hover:to-orange-600 transition-all shadow-lg"
+                    >
+                        🔄 נסה שוב
+                    </button>
+                </motion.div>
+                );
+    }
+
+                return (
+                <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="bg-white rounded-3xl p-12 text-center"
+                >
+                    <div className="animate-pulse text-8xl mb-6">🧠</div>
+                    <h2 className="text-3xl font-bold text-gray-800 mb-4">מבצע ניתוח מעמיק...</h2>
+                    <p className="text-gray-600 text-lg mb-6">
+                        Gemini AI מנתח את הסרטון לפי הפרומפטים המותאמים אישית שלך
+                    </p>
+                    <div className="flex justify-center">
+                        <div className="w-64 h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <motion.div
+                                className="h-full bg-gradient-to-l from-cyan-500 to-orange-500"
+                                initial={{ width: '0%' }}
+                                animate={{ width: '100%' }}
+                                transition={{ duration: 3, repeat: Infinity }}
+                            />
+                        </div>
+                    </div>
+                </motion.div>
+                );
+}
+
+                // Results View
+                function ResultsView({
+                    result,
+                    currentUserType,
+                    onReanalyze
+                }: {
+                    result: AnalysisResult;
+                currentUserType: string;
+    onReanalyze: (userType: string, prompts: any) => void;
+}) {
+    const [showPromptEditor, setShowPromptEditor] = useState(false);
+
+                const userTypeLabels: Record<string, string> = {
+                    family: 'בית (משפחה)',
+                caregiver: 'מטפל מקצועי',
+                kindergarten: 'מוסדי (גן ילדים)'
+    };
+
+                return (
+                <>
+                    <motion.div
+                        initial={{ scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        className="space-y-6"
+                    >
+                        {/* Header with Prompt Info + Edit Button */}
+                        <div className="bg-white rounded-3xl p-6 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-2xl font-bold text-gray-800 mb-1">📊 תוצאות ניתוח</h2>
+                                <p className="text-sm text-gray-600">
+                                    נותח לפי: <span className="font-bold text-cyan-600">{userTypeLabels[currentUserType] || currentUserType}</span>
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowPromptEditor(true)}
+                                className="px-6 py-3 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl font-bold hover:from-purple-600 hover:to-blue-600 transition-all shadow-lg flex items-center gap-2"
+                            >
+                                ⚙️ ערוך פרומפט ונתח שוב
+                            </button>
+                        </div>
+
+                        {/* Safety Layer */}
+                        <div className="bg-white rounded-3xl p-8">
+                            <h3 className="text-2xl font-bold text-gray-800 mb-4">🛡️ הערכת בטיחות</h3>
+                            <div className={`p-6 rounded-2xl ${result.safety_layer.verdict === 'safe' ? 'bg-green-50 border-2 border-green-200' :
+                                    result.safety_layer.verdict === 'concerning' ? 'bg-yellow-50 border-2 border-yellow-200' :
+                                        'bg-red-50 border-2 border-red-200'
+                                }`}>
+                                <div className="text-4xl mb-2">
+                                    {result.safety_layer.verdict === 'safe' ? '✅' : result.safety_layer.verdict === 'concerning' ? '⚠️' : '🚫'}
+                                </div>
+                                <h4 className="text-xl font-bold mb-2">
+                                    {result.safety_layer.verdict === 'safe' ? 'בטוח' : result.safety_layer.verdict === 'concerning' ? 'מעורר דאגה' : 'לא בטוח'}
+                                </h4>
+                                <p className="text-gray-700">ציון: {result.safety_layer.score}/10</p>
+                            </div>
+                        </div>
+
+                        {/* Recommendations */}
+                        {result.recommendations && result.recommendations.length > 0 && (
+                            <div className="bg-white rounded-3xl p-8">
+                                <h3 className="text-2xl font-bold text-gray-800 mb-6">💡 המלצות</h3>
+                                <div className="space-y-4">
+                                    {result.recommendations.map((rec, i) => (
+                                        <div key={i} className="bg-blue-50 border-r-4 border-blue-400 p-6 rounded-lg">
+                                            <h4 className="font-bold text-lg mb-2 flex items-center gap-2">
+                                                {rec.icon} {rec.title}
+                                            </h4>
+                                            <p className="text-gray-700 mb-2">{rec.explanation}</p>
+                                            <p className="text-sm text-gray-600 italic">💬 {rec.why_it_works}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Forensic Layer */}
+                        <div className="bg-white rounded-3xl p-8">
+                            <h3 className="text-2xl font-bold text-gray-800 mb-6">📋 עובדות ותצפיות</h3>
+                            <div className="grid md:grid-cols-2 gap-6">
+                                <div>
+                                    <h4 className="font-bold mb-3">עובדות:</h4>
+                                    <ul className="space-y-2">
+                                        {result.forensic_layer.facts.map((fact, i) => (
+                                            <li key={i} className="flex items-start gap-2">
+                                                <span>•</span>
+                                                <span>{fact}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                                <div>
+                                    <h4 className="font-bold mb-3">תצפיות:</h4>
+                                    <ul className="space-y-2">
+                                        {result.forensic_layer.observations.map((obs, i) => (
+                                            <li key={i} className="flex items-start gap-2">
+                                                <span>•</span>
+                                                <span>{obs}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Psychological Layer */}
+                        <div className="bg-white rounded-3xl p-8">
+                            <h3 className="text-2xl font-bold text-gray-800 mb-6">🧠 ניתוח פסיכולוגי</h3>
+                            <div className="space-y-4">
+                                <div>
+                                    <h4 className="font-bold mb-3">פרשנויות:</h4>
+                                    <ul className="space-y-2">
+                                        {result.psychological_layer.interpretations.map((interp, i) => (
+                                            <li key={i} className="bg-purple-50 border-r-4 border-purple-400 p-4 rounded">
+                                                {interp}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                                <div>
+                                    <h4 className="font-bold mb-3">דינמיקה בין משתתפים:</h4>
+                                    <ul className="space-y-2">
+                                        {result.psychological_layer.relationship_dynamics.map((dyn, i) => (
+                                            <li key={i} className="bg-green-50 border-r-4 border-green-400 p-4 rounded">
+                                                {dyn}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </motion.div>
+
+                    {/* Prompt Editor Modal */}
+                    <PromptEditorModal
+                        isOpen={showPromptEditor}
+                        onClose={() => setShowPromptEditor(false)}
+                        currentUserType={currentUserType}
+                        onReanalyze={onReanalyze}
+                    />
+                </>
+                );
+}
