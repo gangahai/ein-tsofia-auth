@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { AnalysisResult, TimelineEvent } from '@/lib/gemini';
+import { AnalysisResult, TimelineEvent, Recommendation } from '@/lib/gemini';
 import { motion } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } from 'recharts';
 import ReactPlayer from 'react-player';
@@ -129,7 +129,7 @@ export default function ResultsPage() {
     const [results] = useState<AnalysisResult>(mockResults);
     const [activeTab, setActiveTab] = useState<'forensic' | 'psychology' | 'safety'>('forensic');
     // Prepare chart data
-    const chartData = results.timeline_log.map(log => ({
+    const chartData = (results.timeline_log as TimelineEvent[] || []).map(log => ({
         time: log.timestamp,
         stress: log.stress_level,
         warmth: log.warmth_level,
@@ -226,7 +226,7 @@ export default function ResultsPage() {
 
                     {/* Timeline Markers */}
                     <div className="space-y-2">
-                        {results.timeline_log.map((event, i) => (
+                        {(results.timeline_log as TimelineEvent[] || []).map((event, i) => (
                             <motion.div
                                 key={i}
                                 initial={{ x: -20, opacity: 0 }}
@@ -319,7 +319,7 @@ export default function ResultsPage() {
                                 <div>
                                     <h4 className="font-bold text-gray-800 mb-2">עובדות מפתח:</h4>
                                     <ul className="space-y-2">
-                                        {results.forensic_layer.facts.map((fact, i) => (
+                                        {(results.forensic_layer.facts as string[] || []).map((fact, i) => (
                                             <li key={i} className="text-gray-700 flex gap-2">
                                                 <span className="text-cyan-500">▪</span> {fact}
                                             </li>
@@ -329,7 +329,7 @@ export default function ResultsPage() {
                                 <div>
                                     <h4 className="font-bold text-gray-800 mb-2">תצפיות:</h4>
                                     <ul className="space-y-2">
-                                        {results.forensic_layer.observations.map((obs, i) => (
+                                        {(results.forensic_layer.observations as string[] || []).map((obs, i) => (
                                             <li key={i} className="text-gray-700 flex gap-2">
                                                 <span className="text-cyan-500">▪</span> {obs}
                                             </li>
@@ -344,7 +344,7 @@ export default function ResultsPage() {
                                 <div>
                                     <h4 className="font-bold text-gray-800 mb-2">פרשנויות:</h4>
                                     <ul className="space-y-2">
-                                        {results.psychological_layer.interpretations.map((interp, i) => (
+                                        {(results.psychological_layer.interpretations as string[] || []).map((interp, i) => (
                                             <li key={i} className="text-gray-700 flex gap-2">
                                                 <span className="text-purple-500">▪</span> {interp}
                                             </li>
@@ -354,7 +354,7 @@ export default function ResultsPage() {
                                 <div>
                                     <h4 className="font-bold text-gray-800 mb-2">דינמיקה:</h4>
                                     <ul className="space-y-2">
-                                        {results.psychological_layer.relationship_dynamics.map((dyn, i) => (
+                                        {(results.psychological_layer.relationship_dynamics as string[] || []).map((dyn, i) => (
                                             <li key={i} className="text-gray-700 flex gap-2">
                                                 <span className="text-purple-500">▪</span> {dyn}
                                             </li>
@@ -369,7 +369,7 @@ export default function ResultsPage() {
                                 <div className="bg-green-50 border border-green-200 rounded-2xl p-6">
                                     <h4 className="font-bold text-green-800 mb-3">גורמים מגנים:</h4>
                                     <ul className="space-y-2">
-                                        {results.safety_layer.protective_factors.map((factor, i) => (
+                                        {(results.safety_layer.protective_factors as string[] || []).map((factor, i) => (
                                             <li key={i} className="text-green-700 flex gap-2">
                                                 <span>✓</span> {factor}
                                             </li>
@@ -391,7 +391,7 @@ export default function ResultsPage() {
                     <h2 className="text-2xl font-bold text-gray-800 mb-6">💡 המלצות מעשיות</h2>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {results.recommendations.map((rec, i) => (
+                        {(results.recommendations as Recommendation[] || []).map((rec, i) => (
                             <motion.div
                                 key={i}
                                 initial={{ scale: 0.9, opacity: 0 }}

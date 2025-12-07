@@ -5,6 +5,8 @@ import { AuthProvider } from "@/components/AuthProvider";
 import { Header } from "@/components/Header";
 
 
+import { EmmaWidget } from "@/components/EmmaWidget";
+
 const rubik = Rubik({
   subsets: ["hebrew", "latin"],
   variable: "--font-rubik",
@@ -25,6 +27,7 @@ export default function RootLayout({
       <body className={`${rubik.variable} font-sans antialiased`}>
         <AuthProvider>
           <Header />
+          <EmmaWidget mode="floating" />
           <main className="min-h-[calc(100vh-80px)] flex flex-col">
             <div className="flex-1">
               {children}

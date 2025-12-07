@@ -3,21 +3,34 @@
 import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { compressVideo } from '@/lib/videoCompression';
+import { getDefaultPrompts } from '@/lib/defaultPrompts';
+import VoiceInput from './VoiceInput';
+import VideoRecorder from './VideoRecorder';
+import VideoPreviewModal from './VideoPreviewModal';
 
 interface VideoUploadProps {
-    onUploadComplete: (file: File, mode: 'regular' | 'quick') => void;
+    onUploadComplete: (file: File, mode: 'regular' | 'quick', voiceData?: { text: string, speakerProfile?: any }) => void;
+    allowQuickAnalysis?: boolean;
+    userType?: string; // Add userType to know which prompt to show
+    onLoadDemo?: () => void; // Add demo loader
 }
 
-export default function VideoUpload({ onUploadComplete }: VideoUploadProps) {
+export default function VideoUpload({ onUploadComplete, allowQuickAnalysis = true, userType = 'family', onLoadDemo }: VideoUploadProps) {
     const [isDragging, setIsDragging] = useState(false);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [showTips, setShowTips] = useState(false);
-    const [shouldCompress, setShouldCompress] = useState(true);
+    const [shouldCompress, setShouldCompress] = useState(false);
     const [compressing, setCompressing] = useState(false);
     const [compressionProgress, setCompressionProgress] = useState(0);
+    const [showPromptModal, setShowPromptModal] = useState(false);
+    const [voiceData, setVoiceData] = useState<{ text: string, speakerProfile?: any } | null>(null);
+    const [showRecorder, setShowRecorder] = useState(false);
+    const [showCameraTips, setShowCameraTips] = useState(false);
+    const [showContextWarning, setShowContextWarning] = useState(false);
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
 
     // File validation
     const validateFile = (file: File): string | null => {
@@ -86,392 +99,405 @@ export default function VideoUpload({ onUploadComplete }: VideoUploadProps) {
         }
     };
 
-    // Upload handler
-    const handleUpload = async (mode: 'regular' | 'quick' = 'regular') => {
+    // Handle transcription from VoiceInput
+    const handleTranscription = (text: string, speakerProfile?: any) => {
+        console.log('📝 Transcription received:', text);
+        console.log('👤 Speaker Profile:', speakerProfile);
+
+        // Store in state to be passed with upload
+        setVoiceData({ text, speakerProfile });
+    };
+
+    // Upload handler where we intercept
+    const handleUpload = async (mode: 'regular' | 'quick' = 'regular', force: boolean = false) => {
         if (!selectedFile) return;
 
+        // Check for missing voice context (only if not forced)
+        if (!force && !voiceData) {
+            setShowContextWarning(true);
+            return;
+        }
+
         try {
+            setShowContextWarning(false); // Ensure modal is closed
             let fileToUpload = selectedFile;
 
-            if (shouldCompress) {
-                // Smart Compression: Skip if file is small (< 50MB)
-                const SMART_COMPRESSION_THRESHOLD = 50 * 1024 * 1024; // 50MB
-
-                if (selectedFile.size < SMART_COMPRESSION_THRESHOLD) {
-                    console.log('🚀 Smart Compression: File is small (<50MB), skipping compression for speed.');
-                    // Proceed with original file
-                } else {
-                    setCompressing(true);
-                    setCompressionProgress(0);
-
-                    try {
-                        fileToUpload = await compressVideo(selectedFile, (progress) => {
-                            setCompressionProgress(progress);
-                        });
-                    } catch (err) {
-                        console.error('Compression failed:', err);
-                        setError('דחיסת הוידאו נכשלה. מנסה להעלות את הקובץ המקורי...');
-                        // Fallback to original file
-                    } finally {
-                        setCompressing(false);
-                    }
+            // Compression logic
+            if (shouldCompress && selectedFile.size > 50 * 1024 * 1024) { // Only compress if > 50MB
+                setCompressing(true);
+                try {
+                    console.log('🔄 Starting compression...');
+                    fileToUpload = await compressVideo(selectedFile, (progress) => {
+                        setCompressionProgress(progress);
+                    });
+                    console.log('✅ Compression complete:', { original: selectedFile.size, compressed: fileToUpload.size });
+                } catch (compError) {
+                    console.error('⚠️ Compression failed, using original file:', compError);
+                    // Continue with original file if compression fails
+                } finally {
+                    setCompressing(false);
                 }
             }
 
             setUploading(true);
-            setUploadProgress(0);
 
             // Simulate upload progress
-            const interval = setInterval(() => {
-                setUploadProgress(prev => {
-                    if (prev >= 100) {
-                        clearInterval(interval);
-                        return 100;
-                    }
-                    return prev + 10;
-                });
-            }, 200);
+            for (let i = 0; i <= 100; i += 10) {
+                setUploadProgress(i);
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
 
-            await new Promise(resolve => setTimeout(resolve, 2500));
+            // Simulate upload delay
+            await new Promise(resolve => setTimeout(resolve, 500));
+            setUploadProgress(100);
 
+            // Pass file and voice data to parent
+            onUploadComplete(fileToUpload, mode, voiceData || undefined);
             setUploading(false);
-            onUploadComplete(fileToUpload, mode);
-
         } catch (err) {
-            console.error('Upload failed:', err);
-            setError('ההעלאה נכשלה. אנא נסה שנית.');
+            console.error('Upload error:', err);
+            setError('שגיאה בהעלאת הקובץ. אנא נסה שנית.');
             setUploading(false);
         }
     };
 
-    // Format file size
-    const formatFileSize = (bytes: number): string => {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    const handleScrollToVoice = () => {
+        setShowContextWarning(false);
+        const voiceSection = document.getElementById('voice-input-section');
+        if (voiceSection) {
+            voiceSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Optional: flash the section
+            voiceSection.classList.add('ring-4', 'ring-indigo-300');
+            setTimeout(() => voiceSection.classList.remove('ring-4', 'ring-indigo-300'), 2000);
+        }
+    };
+
+    const handleRecordingComplete = (file: File) => {
+        setShowRecorder(false);
+        handleFileSelect(file);
     };
 
     return (
-        <div className="w-full max-w-4xl mx-auto">
-            {/* Upload Area */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-            >
-                <div
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    className={`
-            border-4 border-dashed rounded-3xl p-12 text-center transition-all duration-300
-            ${isDragging
-                            ? 'border-cyan-500 bg-cyan-50 scale-105'
-                            : 'border-gray-300 bg-white hover:border-cyan-400'
-                        }
-          `}
-                >
-                    {!selectedFile ? (
-                        <>
-                            {/* Upload Icon */}
+        <div className="w-full max-w-4xl mx-auto relative">
+            <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
+                <div className="p-2 md:p-6">
+                    {/* Header or Analyze Button */}
+                    <div className="text-center mb-2 md:mb-6 min-h-[60px] md:min-h-[100px] flex items-center justify-center">
+                        {!selectedFile ? (
                             <motion.div
-                                animate={{ y: isDragging ? -10 : 0 }}
-                                className="mb-6"
+                                initial={{ opacity: 0, scale: 0.9 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.9 }}
                             >
-                                <svg
-                                    className="w-24 h-24 mx-auto text-cyan-500"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                >
-                                    <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                                    />
-                                </svg>
+                                <div className="inline-block w-8 h-8 md:w-24 md:h-24 mb-1 md:mb-4">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" className="w-full h-full drop-shadow-md">
+                                        <defs>
+                                            <linearGradient id="clapperMain" x1="0%" y1="0%" x2="0%" y2="100%">
+                                                <stop offset="0%" stopColor="#6366f1" />
+                                                <stop offset="100%" stopColor="#4338ca" />
+                                            </linearGradient>
+                                            <linearGradient id="clapperStripes" x1="0%" y1="0%" x2="100%" y2="100%">
+                                                <stop offset="0%" stopColor="#ffffff" />
+                                                <stop offset="100%" stopColor="#e0e7ff" />
+                                            </linearGradient>
+                                        </defs>
+
+                                        {/* Main Body */}
+                                        <rect x="8" y="24" width="48" height="34" rx="6" fill="url(#clapperMain)" className="shadow-lg" />
+
+                                        {/* Clapper Top - Angled */}
+                                        <g transform="rotate(-15, 8, 24)">
+                                            <rect x="8" y="10" width="48" height="12" rx="3" fill="#312e81" />
+                                            <path d="M12 10 L20 22 M28 10 L36 22 M44 10 L52 22" stroke="white" strokeWidth="4" strokeLinecap="round" />
+                                        </g>
+
+                                        {/* Play Icon */}
+                                        <path d="M28 36 L40 43 L28 50 Z" fill="white" className="drop-shadow-sm" />
+                                    </svg>
+                                </div>
+                                <h2 className="text-sm md:text-xl font-bold text-gray-800 mb-0 md:mb-1">העלאת סרטון לניתוח</h2>
+                                <p className="text-[10px] md:text-sm text-gray-600">בחר אפשרות להעלאת סרטון</p>
                             </motion.div>
+                        ) : (
+                            <motion.button
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                whileHover={{ scale: 1.05, boxShadow: "0 0 30px rgba(99, 102, 241, 0.4)" }}
+                                whileTap={{ scale: 0.95 }}
+                                onClick={() => handleUpload('regular')} // This will trigger the check
+                                disabled={uploading}
+                                className={`
+                                    w-56 h-56 rounded-full font-bold text-xl shadow-2xl flex flex-col items-center justify-center gap-3 transition-all border-4 border-white ring-4 ring-indigo-100 relative overflow-hidden group
+                                    ${uploading
+                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                        : 'bg-gradient-to-br from-indigo-600 via-purple-600 to-indigo-800 text-white'
+                                    }
+                                `}
+                            >
+                                {uploading ? (
+                                    <>
+                                        <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                                        <span className="text-4xl animate-spin mb-2">⏳</span>
+                                        <span className="text-sm">מעלה... {uploadProgress}%</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
 
-                            <h3 className="text-2xl font-bold text-gray-800 mb-2">
-                                {isDragging ? 'שחרר כאן' : 'גרור ושחרר וידאו'}
-                            </h3>
-                            <p className="text-gray-600 mb-6">
-                                או לחץ לבחירת קובץ מהמחשב
-                            </p>
+                                        {/* Modern Brain/AI Icon */}
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-16 h-16 text-indigo-100 drop-shadow-md">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+                                        </svg>
 
-                            {/* File Input */}
+                                        <span className="relative z-10 text-lg tracking-wide">נתח סרטון</span>
+                                        <span className="text-[10px] opacity-70 font-normal bg-black/10 px-2 py-0.5 rounded-full">AI Deep Analysis</span>
+                                    </>
+                                )}
+                            </motion.button>
+                        )}
+                    </div>
+
+                    {/* Upload Options Container */}
+                    <div className="grid grid-cols-2 gap-3 md:gap-6 mb-4 md:mb-6">
+                        {/* Option 1: File Upload */}
+                        <div
+                            onDragOver={handleDragOver}
+                            onDragLeave={handleDragLeave}
+                            onDrop={handleDrop}
+                            className={`
+                                relative border-3 border-dashed rounded-2xl p-2 md:p-8 text-center transition-all duration-300 cursor-pointer group
+                                ${isDragging
+                                    ? 'border-indigo-500 bg-indigo-50 scale-105'
+                                    : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'
+                                }
+                            `}
+                        >
                             <input
                                 type="file"
-                                accept="video/mp4,video/quicktime,video/x-msvideo,video/avi,video/msvideo"
+                                accept="video/*"
                                 onChange={handleFileInput}
-                                className="hidden"
-                                id="video-upload"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                             />
-                            <label
-                                htmlFor="video-upload"
-                                className="inline-block px-8 py-4 bg-gradient-to-l from-cyan-500 to-orange-500 text-white rounded-xl font-semibold cursor-pointer hover:from-cyan-600 hover:to-orange-600 transition-all shadow-lg hover:scale-105"
-                            >
-                                📂 בחר קובץ
-                            </label>
+                            <div className="space-y-1 md:space-y-4">
+                                <div className="w-10 h-10 md:w-20 md:h-20 mx-auto transform group-hover:scale-110 transition-transform duration-300">
+                                    {/* Soft 3D Cloud with Arrow */}
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" className="w-full h-full drop-shadow-md">
+                                        <defs>
+                                            <linearGradient id="softCloud" x1="0%" y1="0%" x2="0%" y2="100%">
+                                                <stop offset="0%" stopColor="#ffffff" />
+                                                <stop offset="100%" stopColor="#f1f5f9" />
+                                            </linearGradient>
+                                        </defs>
+                                        <path d="M16 42 C10 42 6 38 6 32 C6 26 10 22 16 22 L18 22 C20 12 30 6 40 8 C48 10 52 16 52 22 L54 22 C58 22 62 26 62 30 C62 36 58 42 52 42 L16 42 Z" fill="url(#softCloud)" stroke="#cbd5e1" strokeWidth="1.5" />
 
-                            {/* Supported Formats */}
-                            <p className="mt-6 text-sm text-gray-500">
-                                פורמטים נתמכים: MP4, MOV, AVI<br />
-                                מקסימום: 500MB (או 2GB עם דחיסה)
-                            </p>
-                        </>
-                    ) : (
-                        <>
-                            {/* Selected File Info */}
-                            <motion.div
-                                initial={{ scale: 0.8, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                className="bg-cyan-50 border border-cyan-200 rounded-2xl p-6"
-                            >
-                                <div className="mb-4">
-                                    <span className="text-6xl">🎬</span>
+                                        {/* Blue Arrow Up */}
+                                        <path d="M32 46 L32 26 M32 26 L24 34 M32 26 L40 34" stroke="#3b82f6" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" fill="none" className="drop-shadow-sm" />
+                                    </svg>
                                 </div>
-
-                                <h4 className="text-xl font-bold text-gray-800 mb-2">
-                                    {selectedFile.name}
-                                </h4>
-
-                                <div className="grid grid-cols-2 gap-4 text-gray-700 mb-6">
-                                    <div>
-                                        <span className="text-sm text-gray-500">גודל:</span>
-                                        <div className="font-semibold">{formatFileSize(selectedFile.size)}</div>
-                                    </div>
-                                    <div>
-                                        <span className="text-sm text-gray-500">סוג:</span>
-                                        <div className="font-semibold">{selectedFile.type.split('/')[1].toUpperCase()}</div>
-                                    </div>
+                                <div>
+                                    <p className="text-base font-bold text-gray-700">העלאת קובץ</p>
+                                    <p className="text-[10px] text-gray-500 mt-1">MP4, MOV, AVI (עד 500MB)</p>
                                 </div>
+                            </div>
+                        </div>
 
-                                {/* Compression Toggle */}
-                                <div className="mb-6 flex items-center justify-center gap-3 bg-white p-3 rounded-xl border border-gray-200 shadow-sm max-w-md mx-auto">
-                                    <div className="flex-1 text-right">
-                                        <span className="font-bold text-gray-800 block">אופטימיזציה לניתוח</span>
-                                        <span className="text-xs text-gray-500">מומלץ! (פעיל אוטומטית רק בקבצים מעל 50MB)</span>
-                                    </div>
-                                    <button
-                                        onClick={() => setShouldCompress(!shouldCompress)}
-                                        className={`w-12 h-6 rounded-full p-1 transition-colors ${shouldCompress ? 'bg-cyan-500' : 'bg-gray-300'}`}
+                        {/* Option 2: Record Video */}
+                        <div className="relative border-3 border-dashed border-gray-200 rounded-2xl p-2 md:p-8 text-center hover:border-purple-300 hover:bg-purple-50 transition-all duration-300 flex flex-col justify-center items-center gap-2 md:gap-4 group">
+                            <button
+                                onClick={() => setShowRecorder(true)}
+                                className="w-full h-full flex flex-col items-center justify-center gap-4"
+                            >
+                                <div className="w-10 h-10 md:w-20 md:h-20 mx-auto transform group-hover:scale-110 transition-transform duration-300">
+                                    {/* Soft 3D Camera */}
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" className="w-full h-full drop-shadow-md">
+                                        <defs>
+                                            <linearGradient id="softCamera" x1="0%" y1="0%" x2="0%" y2="100%">
+                                                <stop offset="0%" stopColor="#c084fc" />
+                                                <stop offset="100%" stopColor="#a855f7" />
+                                            </linearGradient>
+                                            <linearGradient id="lensReflect" x1="0%" y1="0%" x2="100%" y2="100%">
+                                                <stop offset="0%" stopColor="#60a5fa" />
+                                                <stop offset="100%" stopColor="#2563eb" />
+                                            </linearGradient>
+                                        </defs>
+
+                                        {/* Camera Body */}
+                                        <rect x="8" y="20" width="48" height="32" rx="8" fill="url(#softCamera)" className="shadow-lg" />
+
+                                        {/* Top Button */}
+                                        <path d="M44 20 L44 16 L52 16 L52 20" fill="#9333ea" />
+
+                                        {/* Lens System */}
+                                        <circle cx="32" cy="36" r="12" fill="#e2e8f0" />
+                                        <circle cx="32" cy="36" r="10" fill="#1e293b" />
+                                        <circle cx="32" cy="36" r="6" fill="url(#lensReflect)" />
+                                        <circle cx="34" cy="34" r="2" fill="white" opacity="0.6" />
+
+                                        {/* Flash */}
+                                        <circle cx="48" cy="28" r="3" fill="#fbbf24" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <p className="text-base font-bold text-gray-700">צילום סרטון</p>
+                                    <p className="text-[10px] text-gray-500 mt-1">פתח מצלמה והקלט</p>
+                                </div>
+                            </button>
+
+                            {/* Camera Tips Button */}
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowCameraTips(!showCameraTips);
+                                }}
+                                className="absolute top-2 right-2 p-2 text-purple-400 hover:text-purple-600 transition-colors"
+                                title="טיפים לצילום"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                            </button>
+
+                            {/* 720p Note REMOVED */}
+
+                            {/* Camera Tips Popover */}
+                            <AnimatePresence>
+                                {showCameraTips && (
+                                    <motion.div
+                                        initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                        exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                                        className="absolute top-10 right-2 w-64 bg-white rounded-xl shadow-xl border border-purple-100 p-4 z-20 text-right"
                                     >
-                                        <div className={`w-4 h-4 rounded-full bg-white shadow-md transform transition-transform ${shouldCompress ? '-translate-x-6' : 'translate-x-0'}`} />
-                                    </button>
-                                </div>
-
-                                {/* Upload Button */}
-                                {!uploading && !compressing ? (
-                                    <div className="flex gap-3 justify-center">
-                                        <motion.button
-                                            whileHover={{ scale: 1.05 }}
-                                            whileTap={{ scale: 0.95 }}
-                                            onClick={() => handleUpload('regular')}
-                                            className="px-8 py-3 bg-gradient-to-l from-cyan-500 to-orange-500 text-white rounded-xl font-bold hover:from-cyan-600 hover:to-orange-600 transition-all shadow-lg"
-                                        >
-                                            ▶️ התחל ניתוח
-                                        </motion.button>
-
-                                        <motion.button
-                                            whileHover={{ scale: 1.05 }}
-                                            whileTap={{ scale: 0.95 }}
-                                            onClick={() => handleUpload('quick')}
-                                            className="px-8 py-3 bg-white border-2 border-purple-500 text-purple-600 rounded-xl font-bold hover:bg-purple-50 transition-all shadow-lg flex items-center gap-2"
-                                        >
-                                            ⚡ ניתוח בזק
-                                        </motion.button>
-
-                                        <motion.button
-                                            whileHover={{ scale: 1.05 }}
-                                            whileTap={{ scale: 0.95 }}
-                                            onClick={() => setSelectedFile(null)}
-                                            className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-300 transition-all"
-                                        >
-                                            ביטול
-                                        </motion.button>
-                                    </div>
-                                ) : (
-                                    <div>
-                                        {/* Progress Bars */}
-                                        {compressing && (
-                                            <div className="mb-3">
-                                                <div className="flex justify-between text-sm text-gray-600 mb-2">
-                                                    <span>דוחס וידאו... (זה עשוי לקחת רגע)</span>
-                                                    <span>{compressionProgress}%</span>
-                                                </div>
-                                                <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
-                                                    <motion.div
-                                                        initial={{ width: 0 }}
-                                                        animate={{ width: `${compressionProgress}%` }}
-                                                        className="h-full bg-purple-500"
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {uploading && (
-                                            <div className="mb-3">
-                                                <div className="flex justify-between text-sm text-gray-600 mb-2">
-                                                    <span>מעלה לשרת...</span>
-                                                    <span>{uploadProgress}%</span>
-                                                </div>
-                                                <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
-                                                    <motion.div
-                                                        initial={{ width: 0 }}
-                                                        animate={{ width: `${uploadProgress}%` }}
-                                                        className="h-full bg-gradient-to-l from-cyan-500 to-orange-500"
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
+                                        <h4 className="font-bold text-purple-800 mb-2 text-sm">טיפים לצילום נכון:</h4>
+                                        <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
+                                            <li>החזק את הטלפון לרוחב (Landscape)</li>
+                                            <li>ודא שיש תאורה טובה על הפנים</li>
+                                            <li>השתדל למנוע רעשי רקע חזקים</li>
+                                            <li>צלם את האינטראקציה כולה</li>
+                                        </ul>
+                                    </motion.div>
                                 )}
+                            </AnimatePresence>
+                        </div>
+                    </div>
+
+                    {/* Recorder Modal */}
+                    {showRecorder && (
+                        <VideoRecorder
+                            onRecordingComplete={handleRecordingComplete}
+                            onCancel={() => setShowRecorder(false)}
+                        />
+                    )}
+
+                    {/* Preview Modal */}
+                    <AnimatePresence>
+                        {showPreviewModal && selectedFile && (
+                            <VideoPreviewModal
+                                file={selectedFile}
+                                onClose={() => setShowPreviewModal(false)}
+                            />
+                        )}
+                    </AnimatePresence>
+
+                    {/* Context Warning Modal */}
+                    <AnimatePresence>
+                        {showContextWarning && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                                <motion.div
+                                    initial={{ opacity: 0, scale: 0.9 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.9 }}
+                                    className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+                                >
+                                    <div className="p-6 text-center">
+                                        <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">
+                                            🎙️
+                                        </div>
+                                        <h3 className="text-xl font-bold text-gray-900 mb-2">רגע אחד...</h3>
+                                        <p className="text-gray-600 mb-6 leading-relaxed">
+                                            כדי להוסיף הסבר מה מטריד אותך, הקלט זה יתן תוצאה מדוייקת יותר.
+                                            <br />
+                                            <span className="text-sm text-gray-500 mt-2 block">האם תרצה להוסיף הקלטה או להמשיך כך?</span>
+                                        </p>
+
+                                        <div className="flex flex-col gap-3">
+                                            <button
+                                                onClick={handleScrollToVoice}
+                                                className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors shadow-lg shadow-indigo-200"
+                                            >
+                                                <span>🎤</span>
+                                                <span>כן, אני רוצה להקליט</span>
+                                            </button>
+                                            <button
+                                                onClick={() => handleUpload('regular', true)}
+                                                className="w-full py-3 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-colors"
+                                            >
+                                                המשך ניתוח ללא הקלטה
+                                            </button>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            </div>
+                        )}
+                    </AnimatePresence>
+
+                    {/* Error Message */}
+                    <AnimatePresence>
+                        {error && (
+                            <motion.div
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -10 }}
+                                className="mt-4 p-4 bg-red-50 text-red-600 rounded-xl flex items-center gap-2"
+                            >
+                                <span>⚠️</span>
+                                {error}
                             </motion.div>
-                        </>
+                        )}
+                    </AnimatePresence>
+
+                    {/* Selected File Preview - Always keep visible to allow changing */}
+                    <AnimatePresence>
+                        {selectedFile && !uploading && (
+                            <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="mt-6 bg-indigo-50 p-4 rounded-xl flex items-center justify-between border border-indigo-100 cursor-pointer hover:bg-indigo-100 transition-colors group"
+                                onClick={() => setShowPreviewModal(true)}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center text-xl group-hover:scale-110 transition-transform">🎥</div>
+                                    <div className="text-right">
+                                        <div className="flex items-center gap-2">
+                                            <p className="font-bold text-gray-800">{selectedFile.name}</p>
+                                        </div>
+                                        <p className="text-xs text-gray-500">{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedFile(null);
+                                    }}
+                                    className="p-2 hover:bg-indigo-200 rounded-full text-indigo-400 hover:text-indigo-600 transition-colors z-10"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    {/* Voice Input Section */}
+                    {(userType === 'family' || userType === 'kindergarten') && (
+                        <div id="voice-input-section" className="mt-6 border-t border-gray-100 pt-6 transition-all duration-300 rounded-2xl">
+                            <div className="bg-gradient-to-br from-gray-50 to-white rounded-2xl p-1 border-2 border-dashed border-gray-200 hover:border-indigo-200 transition-colors">
+                                <VoiceInput onTranscriptionComplete={handleTranscription} />
+                            </div>
+                        </div>
                     )}
                 </div>
-
-                {/* Error Message */}
-                <AnimatePresence>
-                    {error && (
-                        <motion.div
-                            initial={{ opacity: 0, y: -10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -10 }}
-                            className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-center"
-                        >
-                            ❌ {error}
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-            </motion.div>
-
-            {/* Recording Tips Button */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
-                className="mt-8 text-center"
-            >
-                <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setShowTips(true)}
-                    className="px-8 py-4 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl font-bold hover:from-purple-600 hover:to-blue-600 transition-all shadow-lg flex items-center gap-3 mx-auto"
-                >
-                    💡 המלצות לצילום נכון
-                </motion.button>
-            </motion.div>
-
-            {/* Recording Tips Modal */}
-            <AnimatePresence>
-                {showTips && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
-                        onClick={() => setShowTips(false)}
-                    >
-                        <motion.div
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.9, opacity: 0 }}
-                            className="bg-white rounded-3xl p-8 max-w-2xl max-h-[80vh] overflow-y-auto"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <div className="flex justify-between items-center mb-6">
-                                <h3 className="text-3xl font-bold text-gray-800">💡 המלצות לצילום</h3>
-                                <motion.button
-                                    whileHover={{ scale: 1.1, rotate: 90 }}
-                                    whileTap={{ scale: 0.9 }}
-                                    onClick={() => setShowTips(false)}
-                                    className="text-gray-500 hover:text-gray-700 text-2xl"
-                                >
-                                    ✕
-                                </motion.button>
-                            </div>
-
-                            <div className="space-y-6 text-right" dir="rtl">
-                                {/* תאורה */}
-                                <div className="bg-yellow-50 border-r-4 border-yellow-400 p-4 rounded-lg">
-                                    <h4 className="font-bold text-lg mb-2 flex items-center gap-2">
-                                        💡 תאורה
-                                    </h4>
-                                    <ul className="space-y-2 text-gray-700">
-                                        <li>• צלם במקום מואר היטב</li>
-                                        <li>• עדיף אור טבעי או תאורה רכה</li>
-                                        <li>• הימנע מאור ישיר מאחור (backlight)</li>
-                                    </ul>
-                                </div>
-
-                                {/* קול */}
-                                <div className="bg-blue-50 border-r-4 border-blue-400 p-4 rounded-lg">
-                                    <h4 className="font-bold text-lg mb-2 flex items-center gap-2">
-                                        🎤 איכות קול
-                                    </h4>
-                                    <ul className="space-y-2 text-gray-700">
-                                        <li>• צלם במקום שקט ללא רעשי רקע</li>
-                                        <li>• ודא שהמיקרופון לא חסום</li>
-                                        <li>• שמור על מרחק סביר מהמצלמה</li>
-                                    </ul>
-                                </div>
-
-                                {/* זווית צילום */}
-                                <div className="bg-green-50 border-r-4 border-green-400 p-4 rounded-lg">
-                                    <h4 className="font-bold text-lg mb-2 flex items-center gap-2">
-                                        📹 זווית צילום
-                                    </h4>
-                                    <ul className="space-y-2 text-gray-700">
-                                        <li>• הקפד לכלול את כל המשתתפים במסך</li>
-                                        <li>• צלם בגובה העיניים</li>
-                                        <li>• שמור על יציבות המצלמה (השתמש בחצובה אם אפשר)</li>
-                                    </ul>
-                                </div>
-
-                                {/* תוכן */}
-                                <div className="bg-purple-50 border-r-4 border-purple-400 p-4 rounded-lg">
-                                    <h4 className="font-bold text-lg mb-2 flex items-center gap-2">
-                                        🎬 תוכן הצילום
-                                    </h4>
-                                    <ul className="space-y-2 text-gray-700">
-                                        <li>• צלם אינטראקציות טבעיות</li>
-                                        <li>• משך מומלץ: 5-15 דקות</li>
-                                        <li>• הימנע מעריכה או חיתוך</li>
-                                        <li>• שמור על פרטיות - אל תכלול פרטים מזהים מיותרים</li>
-                                    </ul>
-                                </div>
-
-                                {/* טכני */}
-                                <div className="bg-red-50 border-r-4 border-red-400 p-4 rounded-lg">
-                                    <h4 className="font-bold text-lg mb-2 flex items-center gap-2">
-                                        ⚙️ דרישות טכניות
-                                    </h4>
-                                    <ul className="space-y-2 text-gray-700">
-                                        <li>• פורמט: MP4, MOV או AVI</li>
-                                        <li>• גודל מקסימלי: 500MB (או 2GB עם דחיסה)</li>
-                                        <li>• משך מקסימלי: 30 דקות</li>
-                                        <li>• רזולוציה מומלצת: 720p ומעלה</li>
-                                    </ul>
-                                </div>
-                            </div>
-
-                            <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => setShowTips(false)}
-                                className="mt-6 w-full px-6 py-3 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl font-bold hover:from-purple-600 hover:to-blue-600 transition-all"
-                            >
-                                הבנתי, תודה!
-                            </motion.button>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            </div>
         </div>
     );
 }

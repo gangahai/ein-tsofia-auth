@@ -20,7 +20,7 @@ export async function POST(req: Request) {
         const { type, data, options } = body;
 
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash', // Using the faster model for analysis
+            model: 'gemini-2.5-pro', // Using Gemini 2.5 Pro for analysis
             safetySettings: [
                 { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
                 { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },

@@ -1,6 +1,11 @@
 'use client';
 
-import { InteractionDataPoint } from '@/lib/gemini';
+interface InteractionDataPoint {
+    from: string;
+    to: string;
+    strength: number;
+    type: string;
+}
 
 interface InteractionHeatmapProps {
     interactions: InteractionDataPoint[];
@@ -93,8 +98,8 @@ export default function InteractionHeatmap({ interactions, participantNames }: I
                                         <td
                                             key={to}
                                             className={`p-4 border-2 border-gray-300 text-center transition-all hover:scale-105 cursor-pointer ${isDiagonal
-                                                    ? 'bg-gray-200 cursor-not-allowed'
-                                                    : getColor(cell.strength, cell.type)
+                                                ? 'bg-gray-200 cursor-not-allowed'
+                                                : getColor(cell.strength, cell.type)
                                                 }`}
                                             title={isDiagonal ? 'עצמי' : `${from} → ${to}: ${cell.strength}/10 (${cell.type})`}
                                         >

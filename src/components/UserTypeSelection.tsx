@@ -6,16 +6,17 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/components/AuthProvider';
 import { userTypeOptions, UserType } from '@/types/types';
 import PrivacyPolicyModal from '@/components/PrivacyPolicyModal';
+import { UserTypeIcons } from './UserTypeIcons';
 
 export default function UserTypeSelection() {
     const { userProfile, refreshUserProfile } = useAuth();
     const [selectedType, setSelectedType] = useState<UserType>(null);
-    const [agreedToPrivacy, setAgreedToPrivacy] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
+
     const handleSaveUserType = async () => {
-        if (!userProfile || !selectedType || !agreedToPrivacy) return;
+        if (!userProfile || !selectedType) return;
 
         setIsSaving(true);
         try {
@@ -74,8 +75,12 @@ export default function UserTypeSelection() {
                                 </div>
                             )}
 
+
+
                             {/* Icon */}
-                            <div className="text-6xl mb-4 text-center">{option.icon}</div>
+                            <div className="w-16 h-16 mb-4 text-center mx-auto text-gray-700">
+                                {UserTypeIcons[option.id] || option.icon}
+                            </div>
 
                             {/* Title */}
                             <h3
@@ -98,48 +103,13 @@ export default function UserTypeSelection() {
                     ))}
                 </div>
 
-                {/* Privacy Agreement Section */}
-                <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-                    <label className="flex items-start gap-3 cursor-pointer group">
-                        <input
-                            type="checkbox"
-                            checked={agreedToPrivacy}
-                            onChange={(e) => setAgreedToPrivacy(e.target.checked)}
-                            className="mt-1 w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                        />
-                        <span className="text-gray-700 leading-relaxed">
-                            אני מאשר/ת שקראתי והבנתי את{' '}
-                            <button
-                                type="button"
-                                onClick={() => setIsModalOpen(true)}
-                                className="text-indigo-600 hover:text-indigo-700 font-semibold underline decoration-2 underline-offset-2 hover:decoration-indigo-700 transition-colors"
-                            >
-                                מדיניות הפרטיות
-                            </button>
-                            {' '}ואני מסכים/ה לתנאי השימוש
-                        </span>
-                    </label>
-
-                    {/* Privacy Policy Link */}
-                    <button
-                        type="button"
-                        onClick={() => setIsModalOpen(true)}
-                        className="mt-4 text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-2 transition-colors"
-                    >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        קרא את מדיניות הפרטיות המלאה
-                    </button>
-                </div>
-
                 {/* Continue Button */}
                 <button
                     onClick={handleSaveUserType}
-                    disabled={!selectedType || !agreedToPrivacy || isSaving}
+                    disabled={!selectedType || isSaving}
                     className={`
             w-full py-4 px-6 rounded-xl font-bold text-lg transition-all duration-300 shadow-lg
-            ${!selectedType || !agreedToPrivacy || isSaving
+            ${!selectedType || isSaving
                             ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                             : 'bg-gradient-to-l from-indigo-600 to-purple-600 text-white hover:from-indigo-700 hover:to-purple-700 hover:shadow-xl transform hover:scale-105'
                         }
@@ -161,6 +131,8 @@ export default function UserTypeSelection() {
 
             {/* Privacy Policy Modal */}
             <PrivacyPolicyModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
+
+
         </div>
     );
 }

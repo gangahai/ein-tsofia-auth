@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { analysisService, FeedbackLog } from '@/lib/analysisService';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { API_KEYS, APIKeyName, getSelectedAPIKeyName, setSelectedAPIKey } from '@/config/apiKeys';
 
 interface FeedbackReportModalProps {
     isOpen: boolean;
@@ -20,6 +21,7 @@ export default function FeedbackReportModal({ isOpen, onClose }: FeedbackReportM
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedContext, setSelectedContext] = useState<string | null>(null);
     const [userMap, setUserMap] = useState<Record<string, string>>({});
+    const [selectedAPIKeyName, setSelectedAPIKeyNameState] = useState<APIKeyName>(getSelectedAPIKeyName());
 
     useEffect(() => {
         if (isOpen) {
@@ -136,6 +138,25 @@ export default function FeedbackReportModal({ isOpen, onClose }: FeedbackReportM
                             </div>
                         </div>
                         <div className="flex items-center gap-3">
+                            {/* API Key Selector */}
+                            <div className="flex items-center gap-2 bg-slate-800 px-3 py-2 rounded-lg border border-slate-600">
+                                <span className="text-xs text-slate-400">API Key:</span>
+                                <select
+                                    value={selectedAPIKeyName}
+                                    onChange={(e) => {
+                                        const newKey = e.target.value as APIKeyName;
+                                        setSelectedAPIKey(newKey);
+                                        setSelectedAPIKeyNameState(newKey);
+                                        // Reload page to apply new API key
+                                        window.location.reload();
+                                    }}
+                                    className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-white focus:ring-2 focus:ring-cyan-500 outline-none font-bold"
+                                >
+                                    {Object.keys(API_KEYS).map(keyName => (
+                                        <option key={keyName} value={keyName}>{keyName}</option>
+                                    ))}
+                                </select>
+                            </div>
                             <button
                                 onClick={() => loadFeedback(true)}
                                 className="p-2 hover:bg-slate-700 rounded-full transition-colors text-slate-400 hover:text-white"

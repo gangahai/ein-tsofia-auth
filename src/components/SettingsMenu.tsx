@@ -3,18 +3,29 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from './AuthProvider';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import FeedbackReportModal from './FeedbackReportModal';
+import { User } from 'firebase/auth';
+import { UserProfile } from '@/types/types';
+import PrivacyPolicyModal from './PrivacyPolicyModal';
 
-export function SettingsMenu() {
+interface SettingsMenuProps {
+    user: User | null;
+    userProfile: UserProfile | null;
+}
+
+export function SettingsMenu({ user, userProfile }: SettingsMenuProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [activeModal, setActiveModal] = useState<'privacy' | 'about' | 'password' | null>(null);
     const [showFeedbackReport, setShowFeedbackReport] = useState(false);
     const [passwordInput, setPasswordInput] = useState('');
     const [passwordError, setPasswordError] = useState(false);
+    const [imageError, setImageError] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const { signOut } = useAuth();
     const router = useRouter();
+    const pathname = usePathname();
+    const [passwordTarget, setPasswordTarget] = useState<'developer' | 'prompt'>('developer');
 
     const handleLogout = async () => {
         try {
@@ -25,45 +36,73 @@ export function SettingsMenu() {
         }
     };
 
-    const handleDeveloperLogin = () => {
-        if (passwordInput === '1234') {
-            setActiveModal(null);
-            setShowFeedbackReport(true);
-            setPasswordInput('');
-            setPasswordError(false);
-        } else {
-            setPasswordError(true);
+    const handlePasswordSubmit = () => {
+        if (passwordTarget === 'developer') {
+            if (passwordInput === '1234') {
+                setActiveModal(null);
+                setShowFeedbackReport(true);
+                setPasswordInput('');
+                setPasswordError(false);
+            } else {
+                setPasswordError(true);
+            }
+        } else if (passwordTarget === 'prompt') {
+            if (passwordInput === '8787') {
+                setActiveModal(null);
+                setPasswordInput('');
+                setPasswordError(false);
+                window.dispatchEvent(new CustomEvent('SHOW_PROMPT_VIEWER'));
+            } else {
+                setPasswordError(true);
+            }
         }
     };
 
-    // Close menu when clicking outside
-    useEffect(() => {
-        function handleClickOutside(event: MouseEvent) {
-            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
-            }
-        }
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
     const toggleMenu = () => setIsOpen(!isOpen);
+
+    if (!user) return null;
 
     return (
         <div className="relative" ref={menuRef}>
-            {/* Settings Button */}
-            <motion.button
-                whileHover={{ scale: 1.1, rotate: 90 }}
-                whileTap={{ scale: 0.9 }}
+            {/* Backdrop for closing menu */}
+            {isOpen && (
+                <div
+                    className="fixed inset-0 z-40 bg-transparent"
+                    onClick={() => setIsOpen(false)}
+                />
+            )}
+
+            {/* User Profile Button (Acts as Settings Toggle) */}
+            <button
+                type="button"
                 onClick={toggleMenu}
-                className="p-2 rounded-full hover:bg-slate-700/50 text-slate-300 hover:text-white transition-colors"
-                title="הגדרות"
+                className="relative group flex items-center gap-2 bg-slate-800/50 py-1.5 px-3 rounded-full border border-slate-700 hover:bg-slate-700 hover:border-slate-500 transition-all overflow-hidden shadow-sm hover:shadow-md"
             >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.217.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-            </motion.button>
+                {/* Normal State - Fades out on hover */}
+                <div className="flex items-center gap-2 transition-all duration-300 group-hover:opacity-0 group-hover:translate-y-2">
+                    <div className="text-right hidden sm:block">
+                        <p className="text-sm font-bold text-slate-200">{user.displayName || 'משתמש'}</p>
+                        <p className="text-xs text-slate-400">{userProfile?.userType === 'family' ? 'משפחה' : userProfile?.userType === 'caregiver' ? 'מטפל' : 'אורח'}</p>
+                    </div>
+                    {!imageError && user.photoURL ? (
+                        <img
+                            src={user.photoURL}
+                            alt={user.displayName || ''}
+                            className="w-8 h-8 rounded-full border border-slate-600"
+                            onError={() => setImageError(true)}
+                        />
+                    ) : (
+                        <div className="w-8 h-8 rounded-full bg-cyan-600 flex items-center justify-center text-xs font-bold text-white shadow-sm">
+                            {user.displayName?.[0]?.toUpperCase() || 'U'}
+                        </div>
+                    )}
+                </div>
+
+                {/* Hover State - Fades in */}
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-800/90 text-white font-bold opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-full group-hover:translate-y-0 backdrop-blur-sm">
+                    <span className="text-xl">⚙️</span>
+                </div>
+            </button>
 
             {/* Dropdown Menu */}
             <AnimatePresence>
@@ -72,69 +111,140 @@ export function SettingsMenu() {
                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className="absolute top-full left-0 mt-3 w-64 bg-slate-800/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-700/50 overflow-hidden z-50 ring-1 ring-black/5"
+                        className="absolute top-full left-0 mt-3 w-56 bg-slate-900/95 backdrop-blur-xl rounded-2xl shadow-[0_0_40px_-10px_rgba(8,145,178,0.3)] border border-slate-700/50 overflow-hidden z-50 ring-1 ring-white/10"
                     >
-                        <div className="p-2 space-y-1">
+                        {/* Header Gradient Line */}
+                        <div className="h-1 w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-500 opacity-80" />
+
+                        <div className="p-3 space-y-2">
                             {/* Language */}
-                            <div className="px-4 py-3 flex items-center justify-between rounded-xl hover:bg-slate-700/50 transition-colors group cursor-default">
+                            <div className="w-full px-4 py-3 flex items-center justify-between rounded-xl bg-slate-800/40 border border-slate-700/30 group cursor-default shadow-sm hover:bg-slate-800/60 transition-all">
                                 <div className="flex items-center gap-3">
-                                    <span className="text-xl">🌐</span>
-                                    <span className="text-sm font-medium text-slate-200">שפה</span>
+                                    <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-cyan-400 shadow-sm">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S12 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S12 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
+                                        </svg>
+                                    </div>
+                                    <span className="text-sm font-medium text-slate-300">שפה</span>
                                 </div>
-                                <div className="flex items-center gap-2 bg-slate-700 px-2.5 py-1 rounded-lg border border-slate-600">
-                                    <span className="text-xs font-bold text-slate-300">עברית</span>
-                                    <span className="text-sm">🇮🇱</span>
+                                <div className="px-2 py-1 rounded text-xs font-bold bg-slate-900 text-slate-400 border border-slate-700 flex gap-1.5 items-center">
+                                    <span>🇮🇱</span>
+                                    <span>עברית</span>
                                 </div>
                             </div>
 
-                            <div className="h-px bg-slate-700/50 my-1 mx-2" />
+                            <div className="h-px bg-gradient-to-r from-transparent via-slate-700/50 to-transparent my-2" />
+
+                            {/* Analyze Page Tools */}
+                            {pathname === '/analyze' && (
+                                <>
+                                    <div className="px-4 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-widest opacity-80">כלים</div>
+
+                                    {/* Show Prompt */}
+                                    <button
+                                        onClick={() => {
+                                            setPasswordTarget('prompt');
+                                            setActiveModal('password');
+                                            setIsOpen(false);
+                                        }}
+                                        className="w-full px-3 py-2.5 flex items-center justify-between rounded-xl hover:bg-slate-800 transition-all group"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center text-slate-400 group-hover:text-pink-400 group-hover:border-pink-500/30 group-hover:bg-pink-500/10 transition-all shadow-sm">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                </svg>
+                                            </div>
+                                            <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors">הצג פרומפט</span>
+                                        </div>
+                                    </button>
+
+                                    {/* Demo Report */}
+                                    <button
+                                        onClick={() => {
+                                            window.dispatchEvent(new CustomEvent('LOAD_DEMO_ANALYSIS'));
+                                            setIsOpen(false);
+                                        }}
+                                        className="w-full px-3 py-2.5 flex items-center justify-between rounded-xl hover:bg-slate-800 transition-all group"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center text-slate-400 group-hover:text-amber-400 group-hover:border-amber-500/30 group-hover:bg-amber-500/10 transition-all shadow-sm">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-1.23-7.579-2.618M5 14.5l1.402 1.402c1.232 1.232.65 3.318-1.065 3.61a48.309 48.309 0 01-1.932-.61" />
+                                                    {/* Added bubbles or simpler Flask icon */}
+                                                </svg>
+                                            </div>
+                                            <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors">דוח לדוגמה</span>
+                                        </div>
+                                    </button>
+
+                                    <div className="h-px bg-gradient-to-r from-transparent via-slate-700/50 to-transparent my-2" />
+                                </>
+                            )}
 
                             {/* Privacy */}
                             <button
                                 onClick={() => { setActiveModal('privacy'); setIsOpen(false); }}
-                                className="w-full px-4 py-3 flex items-center justify-between rounded-xl hover:bg-slate-700/50 text-right transition-all group"
+                                className="w-full px-3 py-2.5 flex items-center justify-between rounded-xl hover:bg-slate-800 transition-all group"
                             >
                                 <div className="flex items-center gap-3">
-                                    <span className="text-xl group-hover:scale-110 transition-transform">🔒</span>
-                                    <span className="text-sm font-medium text-slate-200 group-hover:text-white">פרטיות</span>
+                                    <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center text-slate-400 group-hover:text-cyan-400 group-hover:border-cyan-500/30 group-hover:bg-cyan-500/10 transition-all shadow-sm">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                                        </svg>
+                                    </div>
+                                    <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors">פרטיות</span>
                                 </div>
-                                <span className="text-slate-500 group-hover:text-slate-400">→</span>
                             </button>
 
                             {/* About */}
                             <button
                                 onClick={() => { setActiveModal('about'); setIsOpen(false); }}
-                                className="w-full px-4 py-3 flex items-center justify-between rounded-xl hover:bg-slate-700/50 text-right transition-all group"
+                                className="w-full px-3 py-2.5 flex items-center justify-between rounded-xl hover:bg-slate-800 transition-all group"
                             >
                                 <div className="flex items-center gap-3">
-                                    <span className="text-xl group-hover:scale-110 transition-transform">ℹ️</span>
-                                    <span className="text-sm font-medium text-slate-200 group-hover:text-white">אודות</span>
+                                    <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center text-slate-400 group-hover:text-blue-400 group-hover:border-blue-500/30 group-hover:bg-blue-500/10 transition-all shadow-sm">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                                        </svg>
+                                    </div>
+                                    <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors">אודות</span>
                                 </div>
-                                <span className="text-slate-500 group-hover:text-slate-400">→</span>
                             </button>
 
-                            {/* Developers (Hidden/Protected) */}
+                            {/* Developers */}
                             <button
-                                onClick={() => { setActiveModal('password'); setIsOpen(false); }}
-                                className="w-full px-4 py-3 flex items-center justify-between rounded-xl hover:bg-slate-700/50 text-right transition-all group"
+                                onClick={() => {
+                                    setPasswordTarget('developer');
+                                    setActiveModal('password');
+                                    setIsOpen(false);
+                                }}
+                                className="w-full px-3 py-2.5 flex items-center justify-between rounded-xl hover:bg-slate-800 transition-all group"
                             >
                                 <div className="flex items-center gap-3">
-                                    <span className="text-xl group-hover:scale-110 transition-transform">🛠️</span>
-                                    <span className="text-sm font-medium text-slate-200 group-hover:text-white">מפתחים</span>
+                                    <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center text-slate-400 group-hover:text-purple-400 group-hover:border-purple-500/30 group-hover:bg-purple-500/10 transition-all shadow-sm">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 18" />
+                                        </svg>
+                                    </div>
+                                    <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors">מפתחים</span>
                                 </div>
-                                <span className="text-slate-500 group-hover:text-slate-400">→</span>
                             </button>
 
-                            <div className="h-px bg-slate-700/50 my-1 mx-2" />
+                            <div className="h-px bg-gradient-to-r from-transparent via-slate-700/50 to-transparent my-2" />
 
                             {/* Logout */}
                             <button
                                 onClick={handleLogout}
-                                className="w-full px-4 py-3 flex items-center justify-between rounded-xl hover:bg-red-500/10 text-right transition-all group mt-1"
+                                className="w-full px-3 py-2.5 flex items-center justify-between rounded-xl hover:bg-red-900/10 transition-all group"
                             >
                                 <div className="flex items-center gap-3">
-                                    <span className="text-xl group-hover:scale-110 transition-transform">🚪</span>
-                                    <span className="text-sm font-bold text-red-400 group-hover:text-red-300">התנתק</span>
+                                    <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700/50 flex items-center justify-center text-slate-400 group-hover:text-red-400 group-hover:border-red-500/30 group-hover:bg-red-500/10 transition-all shadow-sm">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+                                        </svg>
+                                    </div>
+                                    <span className="text-sm font-bold text-slate-300 group-hover:text-red-400">התנתק</span>
                                 </div>
                             </button>
                         </div>
@@ -144,7 +254,7 @@ export function SettingsMenu() {
 
             {/* Modals */}
             <AnimatePresence>
-                {activeModal && (
+                {activeModal && activeModal !== 'privacy' && (
                     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setActiveModal(null)}>
                         <motion.div
                             initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -161,39 +271,6 @@ export function SettingsMenu() {
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                                 </svg>
                             </button>
-
-                            {activeModal === 'privacy' && (
-                                <div className="text-right">
-                                    <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center justify-end gap-3 border-b pb-4">
-                                        מדיניות פרטיות <span className="text-3xl">🔒</span>
-                                    </h2>
-                                    <div className="space-y-4 text-gray-600 leading-relaxed">
-                                        <p className="text-lg font-medium text-gray-800">
-                                            מערכת <strong>עין צופיה</strong> מחויבת לשמירה על פרטיותך.
-                                        </p>
-                                        <ul className="space-y-3 pr-4">
-                                            <li className="flex items-start gap-2">
-                                                <span className="text-cyan-500 mt-1">•</span>
-                                                <span>כל הסרטונים מועלים לשרתים מאובטחים ומוצפנים.</span>
-                                            </li>
-                                            <li className="flex items-start gap-2">
-                                                <span className="text-cyan-500 mt-1">•</span>
-                                                <span>הניתוח מתבצע ע"י AI ללא מעורבות אנושית.</span>
-                                            </li>
-                                            <li className="flex items-start gap-2">
-                                                <span className="text-cyan-500 mt-1">•</span>
-                                                <span>המידע האישי נשמר בסודיות מוחלטת.</span>
-                                            </li>
-                                        </ul>
-                                        <div className="bg-cyan-50 p-4 rounded-xl border border-cyan-100 mt-6 flex items-center gap-3">
-                                            <span className="text-2xl">🛡️</span>
-                                            <p className="text-sm text-cyan-900 font-bold">
-                                                המידע שלך בטוח איתנו.
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
 
                             {activeModal === 'about' && (
                                 <div className="text-right">
@@ -223,10 +300,10 @@ export function SettingsMenu() {
                             {activeModal === 'password' && (
                                 <div className="text-right">
                                     <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center justify-end gap-3 border-b pb-4">
-                                        כניסת מפתחים <span className="text-3xl">🛠️</span>
+                                        {passwordTarget === 'developer' ? 'כניסת מפתחים' : 'צפייה בפרומפט'} <span className="text-3xl">{passwordTarget === 'developer' ? '🛠️' : '👁️'}</span>
                                     </h2>
                                     <div className="space-y-4">
-                                        <p className="text-gray-600 mb-2">אנא הזן סיסמת מפתחים:</p>
+                                        <p className="text-gray-600 mb-2">אנא הזן סיסמה:</p>
                                         <input
                                             type="password"
                                             value={passwordInput}
@@ -234,7 +311,7 @@ export function SettingsMenu() {
                                                 setPasswordInput(e.target.value);
                                                 setPasswordError(false);
                                             }}
-                                            onKeyDown={(e) => e.key === 'Enter' && handleDeveloperLogin()}
+                                            onKeyDown={(e) => e.key === 'Enter' && handlePasswordSubmit()}
                                             className="w-full p-3 border border-gray-300 rounded-xl text-center text-2xl tracking-widest focus:ring-2 focus:ring-cyan-500 outline-none text-gray-800"
                                             autoFocus
                                             placeholder="••••"
@@ -243,7 +320,7 @@ export function SettingsMenu() {
                                             <p className="text-red-500 text-sm font-bold text-center">סיסמה שגויה</p>
                                         )}
                                         <button
-                                            onClick={handleDeveloperLogin}
+                                            onClick={handlePasswordSubmit}
                                             className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-colors mt-4"
                                         >
                                             כניסה
@@ -255,6 +332,11 @@ export function SettingsMenu() {
                     </div>
                 )}
             </AnimatePresence>
+
+            <PrivacyPolicyModal
+                isOpen={activeModal === 'privacy'}
+                onClose={() => setActiveModal(null)}
+            />
 
             <FeedbackReportModal
                 isOpen={showFeedbackReport}

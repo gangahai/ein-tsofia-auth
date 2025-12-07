@@ -136,11 +136,11 @@ export default function AnalysisCostsModal({ isOpen, onClose, videoData, usageMe
                                             <div key={i} className="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
                                                 <div>
                                                     <span className="font-bold text-gray-800 block">{step.stepName}</span>
-                                                    <span className="text-xs text-gray-500">{step.model} • {step.durationSeconds.toFixed(1)}s</span>
+                                                    <span className="text-xs text-gray-500">{step.model || 'N/A'} • {step.durationSeconds?.toFixed(1) || '0.0'}s</span>
                                                 </div>
                                                 <div className="text-right">
-                                                    <span className="font-bold text-cyan-700 block">${step.totalCost.toFixed(5)}</span>
-                                                    <span className="text-xs text-gray-400">{step.inputTokens + step.outputTokens} טוקנים</span>
+                                                    <span className="font-bold text-cyan-700 block">${(step.totalCost ?? step.cost ?? 0).toFixed(5)}</span>
+                                                    <span className="text-xs text-gray-400">{(step.inputTokens ?? 0) + (step.outputTokens ?? 0) || step.tokens || 0} טוקנים</span>
                                                 </div>
                                             </div>
                                         ))}

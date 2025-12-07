@@ -30,8 +30,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 return userDoc.data() as UserProfile;
             }
             return null;
-        } catch (error) {
-            console.error('Error fetching user profile:', error);
+        } catch (error: any) {
+            // Silently handle offline mode - this is expected behavior
+            if (error?.code === 'unavailable' || error?.message?.includes('offline')) {
+                console.warn('⚠️ Firestore offline - skipping profile fetch');
+            } else {
+                console.error('Error fetching user profile:', error);
+            }
             return null;
         }
     };
@@ -124,6 +129,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Sign in with Google using popup
     const signInWithGoogle = async () => {
+        if (!googleProvider) {
+            throw new Error('Google authentication is not configured');
+        }
         try {
             await signInWithPopup(auth, googleProvider);
         } catch (error) {

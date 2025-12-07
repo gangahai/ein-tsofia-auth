@@ -41,7 +41,7 @@ export async function getEventSummary(
 ): Promise<string> {
     try {
         console.log('📝 Getting event summary...');
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
         const videoData = await fileToGenerativePart(videoFile);
 
         const participantContext = participants.map(p =>
@@ -81,7 +81,7 @@ export async function generateEmotionTimeline(
 ): Promise<EmotionPoint[]> {
     try {
         console.log('📈 Generating emotion timeline...');
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
         const videoData = await fileToGenerativePart(videoFile);
 
         const participantContext = participants.map(p =>
@@ -170,7 +170,7 @@ export async function analyzeAnomalies(
 
     try {
         console.log(`🔍 Analyzing ${anomalyPoints.length} anomalies...`);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
         const videoData = await fileToGenerativePart(videoFile);
 
         const anomalyContext = anomalyPoints.map(p =>

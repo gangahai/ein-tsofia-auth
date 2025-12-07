@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EmmaAvatar } from './EmmaAvatar';
+import { AnalysisResult } from '@/lib/gemini';
 
 interface Message {
     role: 'user' | 'emma';
@@ -11,13 +12,16 @@ interface Message {
 
 interface EmmaWidgetProps {
     mode?: 'floating' | 'header';
+    analysisResult?: AnalysisResult;
+    userId?: string;
 }
 
-export function EmmaWidget({ mode = 'floating' }: EmmaWidgetProps) {
+export function EmmaWidget({ mode = 'floating', analysisResult, userId }: EmmaWidgetProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [isTyping, setIsTyping] = useState(false);
+    const [showGreeting, setShowGreeting] = useState(true);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
@@ -27,6 +31,14 @@ export function EmmaWidget({ mode = 'floating' }: EmmaWidgetProps) {
     useEffect(() => {
         scrollToBottom();
     }, [messages, isOpen]);
+
+    // Auto-hide greeting after 5 seconds
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setShowGreeting(false);
+        }, 5000);
+        return () => clearTimeout(timer);
+    }, []);
 
     useEffect(() => {
         // Initial greeting
@@ -38,6 +50,18 @@ export function EmmaWidget({ mode = 'floating' }: EmmaWidgetProps) {
                 }
             ]);
         }
+    }, []);
+
+    const [isPulsing, setIsPulsing] = useState(false);
+
+    // Pulse animation effect
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setIsPulsing(true);
+            setTimeout(() => setIsPulsing(false), 2000); // Pulse for 2 seconds
+        }, 10000); // Every 10 seconds
+
+        return () => clearInterval(interval);
     }, []);
 
     const handleSend = async () => {
@@ -155,18 +179,39 @@ export function EmmaWidget({ mode = 'floating' }: EmmaWidgetProps) {
                 )}
             </AnimatePresence>
 
+            {/* Floating Greeting Bubble */}
+            <AnimatePresence>
+                {mode === 'floating' && !isOpen && showGreeting && (
+                    <motion.div
+                        initial={{ opacity: 0, x: 20, scale: 0.9 }}
+                        animate={{ opacity: 1, x: 0, scale: 1 }}
+                        exit={{ opacity: 0, x: 10, scale: 0.9 }}
+                        transition={{ duration: 0.3 }}
+                        className="absolute bottom-2 right-full mr-4 w-max pointer-events-none"
+                    >
+                        <div className="bg-purple-50/90 backdrop-blur-sm px-4 py-2 rounded-2xl rounded-br-none shadow-lg border border-purple-100 flex items-center gap-2">
+                            <span className="text-purple-900 font-medium text-sm">אני כאן בשבילך</span>
+                            <span className="text-xs">💜</span>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={() => {
+                    setIsOpen(!isOpen);
+                    setShowGreeting(false);
+                }}
                 className={`relative group ${mode === 'header' ? 'flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/10 transition-colors' : ''}`}
             >
-                {mode === 'floating' && (
+                {mode === 'floating' && isPulsing && (
                     <div className="absolute inset-0 bg-purple-600 rounded-full animate-ping opacity-20 group-hover:opacity-40"></div>
                 )}
 
                 <div className={`relative ${mode === 'floating' ? 'bg-white p-1 rounded-full shadow-lg border border-gray-100' : ''} overflow-hidden`}>
-                    <EmmaAvatar size={mode === 'header' ? 'md' : 'lg'} />
+                    <EmmaAvatar size={mode === 'header' ? 'md' : 'md'} />
                 </div>
 
                 {mode === 'header' && (
@@ -177,7 +222,7 @@ export function EmmaWidget({ mode = 'floating' }: EmmaWidgetProps) {
                 )}
 
                 {!isOpen && (
-                    <span className={`absolute block h-3 w-3 rounded-full bg-green-500 ring-2 ring-white ${mode === 'floating' ? 'top-0 right-0 h-4 w-4 bg-red-500' : 'bottom-1 right-1'}`} />
+                    <span className={`absolute block h-3 w-3 rounded-full bg-green-500 ring-2 ring-white ${mode === 'floating' ? 'top-0 right-0 h-4 w-4 bg-green-500' : 'bottom-1 right-1'}`} />
                 )}
             </motion.button>
         </div>

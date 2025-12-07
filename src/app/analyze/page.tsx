@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import VideoUpload from '@/components/VideoUpload';
-import { identifyParticipants, deepAnalysis, quickAnalysis, Participant, AnalysisResult, DetailedCost, Recommendation } from '@/lib/gemini';
+import { identifyParticipants, deepAnalysis, quickAnalysis, fastKindergartenAnalysis, Participant, AnalysisResult, DetailedCost, Recommendation, QuickAnalysisTimelineEvent, quickSafetyScan } from '@/lib/gemini';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
-import { defaultPrompts } from '@/lib/defaultPrompts';
+import { defaultPrompts, getDefaultPrompts } from '@/lib/defaultPrompts';
 import PromptEditorModal from '@/components/PromptEditorModal';
 import EmotionTimelineChart from '@/components/EmotionTimelineChart';
 import EventTimeline from '@/components/EventTimeline';
@@ -17,53 +17,270 @@ import DraggableDashboard from '@/components/DraggableDashboard';
 import FeedbackComponent from '@/components/FeedbackComponent';
 import AddAnalysisModal from '@/components/AddAnalysisModal';
 import CustomEditor from '@/components/CustomEditor';
+import VideoAnalysisPlayer from '@/components/VideoAnalysisPlayer';
+import ReportCustomizationSelector, { ReportTileType } from '@/components/ReportCustomizationSelector';
+import KindergartenUploadView from '@/components/KindergartenUploadView';
+import KindergartenResultsView from '@/components/KindergartenResultsView';
+import FamilyResultsView from '@/components/FamilyResultsView';
 
-type AnalysisStep = 'upload' | 'identify' | 'analyzing' | 'quick_analyzing' | 'results' | 'quick_results';
+// Helper to load custom prompts
+const loadCustomPrompts = (userType: string) => {
+    if (typeof window === 'undefined') return null;
+    const saved = localStorage.getItem(`customPrompts_${userType}`);
+    return saved ? JSON.parse(saved) : null;
+};
+
+type AnalysisStep = 'upload' | 'identify' | 'customization' | 'analyzing' | 'quick_analyzing' | 'results' | 'quick_results';
+
+// Security Ticker Component - Compact & Centered
+const SecurityTicker = () => {
+    const messages = [
+        "🔒 בטיחות מקסימלית לסרטונים - לא כמו בצאט רגיל שם המידע משמש לאימון מודלים ושימוש מסחרי",
+        "📊 דוח מקצועי וממוקד לשינוי + עצות מעשיות",
+        "🎓 גישות חינוך וטיפול חדשניות, המתעדכנות לפי בחירת המשתמש",
+        "🧠 המערכת לא רק רואה היא מרגישה ומבינה לעומק",
+        "⏳ העיבוד לוקח לעיתים כמה דקות - בגלל שהמערכת לא סתם זורקת תשובות - עיבוד עומק זה תהליך",
+        "🗣️ פרט במילים שלך מה מפריע לך בדיוק, זה יעזור לאמה לתת לך תשובה ועצה מעולים מאוד",
+        "✨ אל תתייאש אם הניתוח הראשון לא בדיוק מה שציפית, בדוק עוד סיטואציה תשאל עמוק ותראה זה קסם!",
+        "📂 אתה יכול להעלות קבצי מידע על המשפחה שלך הכל נשמר בכספת ויכול לעזור לאמה לתת תשובות יותר ממוקדות"
+    ];
+
+    const [index, setIndex] = useState(0);
+
+    useEffect(() => {
+        const currentMessage = messages[index];
+        // Base duration 5s, add 2.5s for long messages (> 60 chars) to allow reading time
+        const duration = currentMessage.length > 60 ? 7500 : 5000;
+
+        const timer = setTimeout(() => {
+            setIndex((prev) => (prev + 1) % messages.length);
+        }, duration);
+        return () => clearTimeout(timer);
+    }, [index]);
+
+    return (
+        <div className="h-8 md:h-6 overflow-hidden relative w-full mx-auto block mb-2 md:mb-0">
+            <AnimatePresence mode="wait">
+                <motion.div
+                    key={index}
+                    initial={{ y: 20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: -20, opacity: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="absolute w-full text-center text-cyan-600 text-xs md:text-sm font-medium flex items-center justify-center gap-2 px-4"
+                >
+                    {messages[index]}
+                </motion.div>
+            </AnimatePresence>
+        </div>
+    );
+};
 
 export default function AnalyzePage() {
     const { user } = useAuth();
     const router = useRouter();
-    const [step, setStep] = useState<AnalysisStep>('upload');
+
+    // -- State Definitions --
+    // Layout and Config
+    const [currentUserType, setCurrentUserType] = useState<string>('family');
+    const [layoutConfig, setLayoutConfig] = useState<string[]>([
+        'emotion_graph', 'event_timeline', 'interaction_heatmap',
+        'interpretations', 'dynamics', 'risk_factors'
+    ]);
+
+    // Data
     const [videoFile, setVideoFile] = useState<File | null>(null);
+    const [savedVideoFile, setSavedVideoFile] = useState<File | null>(null);
     const [participants, setParticipants] = useState<Participant[]>([]);
-    const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-    const [quickResult, setQuickResult] = useState<{ description: string; recommendation: Recommendation; usageMetadata?: any; detailedCost?: DetailedCost[] } | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [savedParticipants, setSavedParticipants] = useState<Participant[]>([]);
+    const [initialStats, setInitialStats] = useState<DetailedCost[]>([]);
     const [videoMetadata, setVideoMetadata] = useState<{
         duration: string;
         size: string;
         resolution: string;
         format: string;
     } | null>(null);
+    const [voiceData, setVoiceData] = useState<{ text: string, speakerProfile?: any } | null>(null);
 
-    // For re-analysis
-    const [savedVideoFile, setSavedVideoFile] = useState<File | null>(null);
-    const [savedParticipants, setSavedParticipants] = useState<Participant[]>([]);
-    const [currentUserType, setCurrentUserType] = useState<string>('family');
-    const [initialStats, setInitialStats] = useState<DetailedCost[]>([]);
+    // Analysis Status
+    const [step, setStep] = useState<AnalysisStep>('upload');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [analysisStatus, setAnalysisStatus] = useState<string>('');
+    const [analysisProgress, setAnalysisProgress] = useState<number>(0);
+    const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
-    // Layout configuration
-    const [layoutConfig, setLayoutConfig] = useState<string[]>([
-        'emotion_graph', 'event_timeline', 'interaction_heatmap',
-        'interpretations', 'dynamics', 'risk_factors'
-    ]);
+    // Results
+    const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+    const [quickResult, setQuickResult] = useState<{ description: string; recommendation: Recommendation; timeline?: QuickAnalysisTimelineEvent[]; usageMetadata?: any; detailedCost?: DetailedCost[] } | null>(null);
 
-    // Load layout from local storage on mount
+    // UI State
+    const [showPromptEditor, setShowPromptEditor] = useState(false);
+    const [selectedTiles, setSelectedTiles] = useState<ReportTileType[]>([]);
+
+    // -- Effects & Helpers --
+
+    // Load user type on mount
     useEffect(() => {
-        const savedPrompts = localStorage.getItem(`customPrompts_${currentUserType}`);
-        if (savedPrompts) {
-            const parsed = JSON.parse(savedPrompts);
-            if (parsed.layoutConfig) {
-                setLayoutConfig(parsed.layoutConfig);
-            }
+        const storedUserType = localStorage.getItem('userType') as string;
+        if (storedUserType) {
+            setCurrentUserType(storedUserType);
+        }
+    }, []);
+
+    // Load layout
+    useEffect(() => {
+        const savedPrompts = loadCustomPrompts(currentUserType);
+        if (savedPrompts && savedPrompts.layoutConfig) {
+            setLayoutConfig(savedPrompts.layoutConfig);
         }
     }, [currentUserType]);
 
+    // Load Demo Analysis
+    const loadDemoAnalysis = () => {
+        if (currentUserType === 'family') {
+            const { mockFamilyAnalysis } = require('@/lib/mockData');
+            setAnalysisResult(mockFamilyAnalysis);
+            // Set mock voice data for demo
+            setVoiceData({
+                text: "איך להתמודד עם התקפי זעם בגן המשחקים?",
+                speakerProfile: { role: "אמא", age_estimate: "30-40" }
+            });
+        } else {
+            const { mockKindergartenAnalysis } = require('@/lib/mockData');
+            setAnalysisResult(mockKindergartenAnalysis);
+        }
+        setStep('results');
+        setLoading(false);
+        setError(null);
+    };
+
+    // Listen for global events
+    useEffect(() => {
+        const handleShowPrompt = () => setShowPromptEditor(true);
+        const handleLoadDemo = () => loadDemoAnalysis();
+
+        window.addEventListener('SHOW_PROMPT_VIEWER', handleShowPrompt);
+        window.addEventListener('LOAD_DEMO_ANALYSIS', handleLoadDemo);
+
+        return () => {
+            window.removeEventListener('SHOW_PROMPT_VIEWER', handleShowPrompt);
+            window.removeEventListener('LOAD_DEMO_ANALYSIS', handleLoadDemo);
+        };
+    }, [currentUserType]);
+    const analysisSteps = [
+        "מעבד את הוידאו...",
+        "מנתח את הסאונד והטון...",
+        "מזהה הבעות פנים...",
+        "בונה פרופיל פסיכולוגי...",
+        "מתייעץ עם מומחים (וירטואליים)...",
+        "מנסח תובנות והמלצות...",
+        "אמה מסיימת את הניתוח..."
+    ];
+
+    // Run analysis
+    const runAnalysis = async (file: File, parts: Participant[], previousStats: DetailedCost[] = [], tiles: ReportTileType[] = [], currentVoiceData?: { text: string, speakerProfile?: any }, method?: string) => {
+        if (!file || !currentUserType) return;
+
+        const startTime = Date.now(); // Capture start time
+        setStep('analyzing');
+        setAnalysisProgress(0);
+        setCurrentStepIndex(0);
+        setLoading(true);
+        setError(null);
+
+        // Simulate progress steps
+        const stepInterval = setInterval(() => {
+            setCurrentStepIndex(prev => {
+                // Don't advance to the last step (100%) until the actual analysis is done
+                if (prev < analysisSteps.length - 2) return prev + 1;
+                return prev;
+            });
+        }, 4500); // Slower progress: Change step every 4.5 seconds
+
+        try {
+            let participantsData: Participant[] = parts;
+
+            // Skip identification for Kindergarten
+            if (currentUserType === 'kindergarten') {
+                // For Kindergarten, we skip explicit ID but might want dummy participants for the prompt context
+                if (participantsData.length === 0) {
+                    participantsData = [{ id: 'p1', name: 'צוות וילדים', role: 'כללי' }];
+                }
+                setAnalysisProgress(10);
+            } else if (participantsData.length === 0) {
+                // Identify Participants (30%) - only if not provided
+                const identificationResult = await identifyParticipants(file);
+                participantsData = identificationResult.participants;
+                setParticipants(participantsData);
+                setSavedParticipants(participantsData);
+                setAnalysisProgress(30);
+            }
+
+            // Deep Analysis with Gemini 2.5 Pro
+            setAnalysisProgress(40);
+
+            // Load custom prompts
+            const customPrompts = loadCustomPrompts(currentUserType) || getDefaultPrompts(currentUserType as any);
+
+            // Use passed voice data or fall back to state
+            const voiceDataToUse = currentVoiceData || voiceData || undefined;
+
+            const deepResult = await deepAnalysis(file, participantsData, customPrompts, currentUserType as any, previousStats, voiceDataToUse, method);
+
+            // Calculate total duration
+            const endTime = Date.now();
+            const totalDuration = (endTime - startTime) / 1000;
+            deepResult.duration = totalDuration; // Overwrite duration with client-side total
+
+            clearInterval(stepInterval);
+
+            // Force progress to 100% and show final step
+            setCurrentStepIndex(analysisSteps.length - 1);
+            setAnalysisProgress(100);
+
+            // Small delay to let user see "Emma is finishing..."
+            setTimeout(() => {
+                setAnalysisResult(deepResult);
+                setLoading(false);
+                setStep('results');
+            }, 1500);
+
+            // Log analysis cost (Non-blocking)
+            if (user && analysisResult?.usageMetadata) {
+                // ... logging logic ...
+            }
+
+        } catch (error: any) {
+            console.error('Analysis failed:', error);
+            clearInterval(stepInterval);
+            setError('שגיאה בניתוח הוידאו. אנא נסה שנית.');
+            setLoading(false);
+            // setStep('upload'); // Stay on analyzing to show error
+        }
+    };
+
+    const handleMethodReanalyze = (method: string, newQuestion?: string) => {
+        if (!savedVideoFile) return;
+
+        // If new question provided, update voice data
+        let voiceDataToUse = voiceData;
+        if (newQuestion) {
+            voiceDataToUse = { text: newQuestion, speakerProfile: voiceData?.speakerProfile };
+            setVoiceData(voiceDataToUse);
+        }
+
+        runAnalysis(savedVideoFile, savedParticipants, [], [], voiceDataToUse || undefined, method);
+    };
+
     // Handle video upload complete
-    const handleUploadComplete = async (file: File, mode: 'regular' | 'quick') => {
+    const handleUploadComplete = async (file: File, mode: 'regular' | 'quick', voiceData?: { text: string, speakerProfile?: any }) => {
         setVideoFile(file);
         setSavedVideoFile(file);
+
+        if (voiceData) {
+            setVoiceData(voiceData);
+        }
 
         // Extract metadata
         const video = document.createElement('video');
@@ -82,176 +299,13 @@ export default function AnalyzePage() {
         };
         video.src = URL.createObjectURL(file);
 
-        // If quick mode, show analyzing screen immediately
-        if (mode === 'quick') {
-            setLoading(true);
-            setStep('quick_analyzing');
-        } else {
-            setLoading(true);
+        if (currentUserType === 'kindergarten' || currentUserType === 'family') {
+            // Kindergarten and Family flow: Skip identification and customization, go straight to analysis
             setStep('analyzing');
-        }
-
-        try {
-            // 1. Identify Participants (Safety check removed per user request)
-            console.log('👥 Identifying participants...');
-            const idResult = await identifyParticipants(file);
-            setParticipants(idResult.participants);
-            setSavedParticipants(idResult.participants);
-
-            const idCost: DetailedCost = {
-                stepName: 'זיהוי משתתפים',
-                model: 'Gemini 2.0 Flash Exp',
-                inputTokens: idResult.usageMetadata?.promptTokenCount || 0,
-                outputTokens: idResult.usageMetadata?.candidatesTokenCount || 0,
-                totalCost: 0, // Free model
-                durationSeconds: idResult.duration || 0
-            };
-
-            const previousStats = [idCost];
-            setInitialStats(previousStats);
-
-            // If quick mode, continue to analysis without stopping at identify screen
-            if (mode === 'quick') {
-                await handleStartQuickAnalysis(file, idResult.participants, previousStats);
-            } else {
-                await runAnalysis(file, idResult.participants, previousStats);
-            }
-
-        } catch (error) {
-            console.error('❌ Participant identification failed:', error);
-            const defaultParticipants = [
-                { id: 'person_2', name: 'משתתף 2', role: 'child' }
-            ];
-            setParticipants(defaultParticipants);
-            setSavedParticipants(defaultParticipants);
-
-            if (mode === 'quick') {
-                await handleStartQuickAnalysis(file, defaultParticipants, []);
-            } else {
-                await runAnalysis(file, defaultParticipants, []);
-            }
-        }
-    };
-
-    const handleReset = () => {
-        setStep('upload');
-        setVideoFile(null);
-        setParticipants([]);
-        setAnalysisResult(null);
-        setSavedVideoFile(null);
-        setSavedParticipants([]);
-        setVideoMetadata(null);
-        setInitialStats([]);
-        setQuickResult(null);
-    };
-
-    // Start quick analysis
-    const handleStartQuickAnalysis = async (
-        fileOverride?: File,
-        participantsOverride?: Participant[],
-        statsOverride?: DetailedCost[]
-    ) => {
-        const file = fileOverride || videoFile;
-        const parts = participantsOverride || participants;
-        const stats = statsOverride || initialStats;
-
-        if (!file) return;
-        setLoading(true);
-        setStep('quick_analyzing');
-        setError(null);
-
-        try {
-            const result = await quickAnalysis(file, parts, stats);
-            setQuickResult(result);
-            setLoading(false);
-            setStep('quick_results');
-
-            // Log cost
-            if (user && result.usageMetadata) {
-                analysisService.logAnalysis({
-                    userId: user.uid,
-                    videoMetadata: {
-                        duration: videoMetadata?.duration || '00:00',
-                        size: videoMetadata?.size || '0 MB',
-                        resolution: videoMetadata?.resolution || 'Unknown',
-                        format: videoMetadata?.format || 'UNKNOWN'
-                    },
-                    usageMetadata: result.usageMetadata,
-                    cost: { input: 0, output: 0, total: 0 } // Free model
-                }).catch(console.error);
-            }
-        } catch (error: any) {
-            console.error('Quick analysis failed:', error);
-            setLoading(false);
-            setError(error?.message || 'שגיאה בניתוח בזק');
-        }
-    };
-
-    // Start analysis
-    const handleStartAnalysis = async () => {
-        if (!videoFile) return;
-        await runAnalysis(videoFile, participants);
-    };
-
-    // Run analysis
-    const runAnalysis = async (file: File, parts: Participant[], previousStats: DetailedCost[] = []) => {
-        setLoading(true);
-        setError(null);
-
-        try {
-            const userType = ((localStorage.getItem('userType') as any) || 'family') as 'family' | 'caregiver' | 'kindergarten';
-            setCurrentUserType(userType);
-            const customPromptsKey = `customPrompts_${userType}`;
-            const saved = localStorage.getItem(customPromptsKey);
-            const customPrompts = saved ? JSON.parse(saved) : defaultPrompts[userType];
-
-            // Update layout if present in saved prompts
-            if (customPrompts.layoutConfig) {
-                setLayoutConfig(customPrompts.layoutConfig);
-            }
-
-            console.log('🧠 Starting analysis with prompts:', customPrompts);
-
-            const result = await deepAnalysis(file, parts, customPrompts, previousStats);
-            setAnalysisResult(result);
-            setLoading(false);
-            setStep('results');
-
-            // Log analysis cost (Non-blocking)
-            if (user && result.usageMetadata) {
-                try {
-                    const inputRate = 0.075 / 1000000;
-                    const outputRate = 0.30 / 1000000;
-                    const inputTokens = result.usageMetadata.promptTokenCount;
-                    const outputTokens = result.usageMetadata.candidatesTokenCount;
-                    const inputCost = inputTokens * inputRate;
-                    const outputCost = outputTokens * outputRate;
-
-                    const format = file.type && file.type.includes('/') ? file.type.split('/')[1].toUpperCase() : 'UNKNOWN';
-
-                    analysisService.logAnalysis({
-                        userId: user.uid,
-                        videoMetadata: {
-                            duration: '00:00', // Placeholder
-                            size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
-                            resolution: 'Unknown',
-                            format: format
-                        },
-                        usageMetadata: result.usageMetadata,
-                        cost: {
-                            input: inputCost,
-                            output: outputCost,
-                            total: inputCost + outputCost
-                        }
-                    }).catch(e => console.error('Background logging failed:', e));
-                } catch (logError) {
-                    console.error('Error preparing log data:', logError);
-                }
-            }
-        } catch (error: any) {
-            console.error('❌ Analysis failed:', error);
-            setLoading(false);
-            setError(error?.message || 'שגיאה לא ידועה בניתוח');
+            // Run analysis immediately with empty participants and tiles, passing voice data
+            await runAnalysis(file, [], [], [], voiceData);
+        } else {
+            setStep('customization');
         }
     };
 
@@ -273,35 +327,10 @@ export default function AnalyzePage() {
 
         try {
             console.log('🔄 Re-analyzing with new prompts:', newPrompts.sections.identity.substring(0, 50) + '...');
-            const result = await deepAnalysis(savedVideoFile!, savedParticipants, newPrompts, initialStats);
+            const result = await deepAnalysis(savedVideoFile!, savedParticipants, newPrompts, newUserType as any, initialStats);
             setAnalysisResult(result);
             setLoading(false);
             setStep('results');
-
-            // Log re-analysis cost (Non-blocking)
-            if (user && result.usageMetadata && videoMetadata) {
-                try {
-                    const inputRate = 0.075 / 1000000;
-                    const outputRate = 0.30 / 1000000;
-                    const inputTokens = result.usageMetadata.promptTokenCount;
-                    const outputTokens = result.usageMetadata.candidatesTokenCount;
-                    const inputCost = inputTokens * inputRate;
-                    const outputCost = outputTokens * outputRate;
-
-                    analysisService.logAnalysis({
-                        userId: user.uid,
-                        videoMetadata: videoMetadata,
-                        usageMetadata: result.usageMetadata,
-                        cost: {
-                            input: inputCost,
-                            output: outputCost,
-                            total: inputCost + outputCost
-                        }
-                    }).catch(e => console.error('Background logging failed:', e));
-                } catch (logError) {
-                    console.error('Error preparing log data:', logError);
-                }
-            }
         } catch (error: any) {
             console.error('❌ Re-analysis failed:', error);
             setLoading(false);
@@ -310,45 +339,106 @@ export default function AnalyzePage() {
     };
 
     const goBack = () => {
-        const steps: AnalysisStep[] = ['upload', 'identify', 'analyzing', 'results'];
-        // Handle quick analysis path
+        const steps: AnalysisStep[] = ['upload', 'identify', 'customization', 'analyzing', 'results'];
+
         if (step === 'quick_analyzing' || step === 'quick_results') {
             setStep('identify');
             return;
         }
 
+        // Special handling for going back from results
+        if (step === 'results') {
+            // If family/kindergarten, go straight to upload (skip analyzing/customization)
+            if (currentUserType === 'kindergarten' || currentUserType === 'family') {
+                setStep('upload');
+                return;
+            }
+            // For pro users, go back to customization
+            setStep('customization');
+            return;
+        }
+
         const currentIndex = steps.indexOf(step);
         if (currentIndex > 0) {
-            setStep(steps[currentIndex - 1]);
+            // Skip 'customization' for family/kindergarten when going back
+            if (step === 'analyzing' && (currentUserType === 'kindergarten' || currentUserType === 'family')) {
+                setStep('upload');
+            } else if (step === 'customization') {
+                setStep('upload');
+            } else {
+                setStep(steps[currentIndex - 1]);
+            }
         }
+    };
+
+    const handleCustomizationComplete = (tiles: ReportTileType[]) => {
+        setSelectedTiles(tiles);
+        setStep('analyzing');
+        // Start analysis with selected tiles
+        if (savedVideoFile) {
+            handleStartAnalysis(tiles);
+        }
+    };
+
+    const handleStartAnalysis = async (tiles: ReportTileType[]) => {
+        if (!savedVideoFile) return;
+        await runAnalysis(savedVideoFile, savedParticipants, initialStats, tiles);
+    };
+
+    const handleReset = () => {
+        setVideoFile(null);
+        setSavedVideoFile(null);
+        setAnalysisResult(null);
+        setStep('upload');
+        setParticipants([]);
+        setSavedParticipants([]);
+        setVoiceData(null);
+        setAnalysisProgress(0);
+        setError(null);
     };
 
     return (
         <div className="min-h-[calc(100vh-80px)] bg-gradient-to-br from-slate-800 via-cyan-900 to-blue-900 p-4">
             <div className="max-w-6xl mx-auto">
-                <div className="bg-white rounded-3xl shadow-2xl p-6 mb-6">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-3xl font-bold text-gray-800 mb-2">🎬 ניתוח וידאו</h1>
-                            <p className="text-gray-600">מערכת ניתוח Gemini AI מתקדמת</p>
+                {/* Standard Header - Hide for Kindergarten Upload/Results as they have their own */}
+                {!(currentUserType === 'kindergarten' && (step === 'upload' || step === 'results')) && (
+                    <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl p-4 md:px-6 md:py-4 mb-6 relative z-10">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-0 mb-3">
+                            {/* Right Side: Title + Badges */}
+                            <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+                                <h1 className="text-lg md:text-xl font-bold text-gray-800 shrink-0">🎬 ניתוח וידאו</h1>
+                                <span className="bg-cyan-100 text-cyan-800 text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0">PRO</span>
+                                <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shrink-0 whitespace-nowrap">
+                                    נשארו לך 2 ניתוחים חינם 🎁
+                                </span>
+                            </div>
+
+                            {/* Left Side: Back Button */}
+                            {/* Back Button Removed as per request */}
+                            <div className="w-16"></div>
                         </div>
-                        {step !== 'upload' && (
-                            <motion.button
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={goBack}
-                                className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-all"
-                            >
-                                ← חזרה
-                            </motion.button>
-                        )}
+
+                        {/* Bottom: Ticker (Full Width Row) */}
+                        <div className="w-full border-t border-gray-100 pt-3">
+                            <SecurityTicker />
+                        </div>
                     </div>
-                </div>
+                )}
 
                 <AnimatePresence mode="wait">
                     {step === 'upload' && (
                         <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                            <VideoUpload onUploadComplete={handleUploadComplete} />
+                            {currentUserType === 'kindergarten' ? (
+                                <KindergartenUploadView
+                                    onUploadComplete={handleUploadComplete}
+                                    onBack={() => router.push('/')}
+                                    onLoadDemo={loadDemoAnalysis}
+                                />
+                            ) : (
+                                <VideoUpload
+                                    onUploadComplete={handleUploadComplete}
+                                />
+                            )}
                         </motion.div>
                     )}
 
@@ -356,67 +446,91 @@ export default function AnalyzePage() {
                         <ParticipantIdentificationView
                             participants={participants}
                             loading={loading}
-                            onStartAnalysis={handleStartAnalysis}
-                            onStartQuickAnalysis={handleStartQuickAnalysis}
+                            onContinue={() => setStep('customization')}
                         />
                     )}
 
-                    {step === 'quick_analyzing' && (
-                        <AnalyzingView
-                            loading={loading}
-                            error={error}
-                            onRetry={handleStartQuickAnalysis}
-                            isQuick={true}
-                        />
+                    {step === 'customization' && (
+                        <motion.div key="customization" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                            <ReportCustomizationSelector
+                                onComplete={handleCustomizationComplete}
+                                onCancel={() => setStep('identify')}
+                            />
+                        </motion.div>
                     )}
 
                     {step === 'analyzing' && (
                         <AnalyzingView
                             loading={loading}
                             error={error}
-                            onRetry={handleStartAnalysis}
+                            status={analysisStatus}
+                            currentStep={analysisSteps[currentStepIndex]}
+                            progress={((currentStepIndex + 1) / analysisSteps.length) * 100}
+                            onRetry={() => handleStartAnalysis(selectedTiles)}
                         />
                     )}
 
                     {step === 'results' && analysisResult && (
-                        <ResultsView
-                            result={analysisResult}
-                            currentUserType={currentUserType}
-                            onReanalyze={handleReanalyze}
-                            onReset={handleReset}
-                            layoutConfig={layoutConfig}
-                            videoMetadata={videoMetadata}
-                            userId={user?.uid}
-                        />
+                        currentUserType === 'family' ? (
+                            <FamilyResultsView
+                                result={analysisResult}
+                                onReset={handleReset}
+                                videoUrl={videoFile ? URL.createObjectURL(videoFile) : null}
+                                onReanalyze={handleMethodReanalyze}
+                                userQuestion={voiceData?.text}
+                            />
+                        ) : currentUserType === 'kindergarten' ? (
+                            <KindergartenResultsView
+                                result={analysisResult}
+                                onReset={handleReset}
+                                videoUrl={videoFile ? URL.createObjectURL(videoFile) : null}
+                            />
+                        ) : (
+                            <ResultsView
+                                result={analysisResult}
+                                currentUserType={currentUserType}
+                                onReanalyze={handleReanalyze}
+                                onReset={handleReset}
+                                layoutConfig={layoutConfig}
+                                videoMetadata={videoMetadata}
+                                userId={user?.uid}
+                                selectedTiles={selectedTiles}
+                                videoUrl={videoFile ? URL.createObjectURL(videoFile) : null}
+                                onUpdateTiles={setSelectedTiles}
+                                onShowPromptEditor={() => setShowPromptEditor(true)}
+                            />
+                        )
                     )}
+                </AnimatePresence>
 
-                    {step === 'quick_results' && quickResult && (
-                        <QuickResultsView
-                            result={quickResult}
+                <AnimatePresence>
+                    {showPromptEditor && (
+                        <PromptEditorModal
+                            isOpen={showPromptEditor}
+                            onClose={() => setShowPromptEditor(false)}
                             currentUserType={currentUserType}
-                            onReset={handleReset}
-                            videoMetadata={videoMetadata}
-                            userId={user?.uid || ''}
+                            onReanalyze={(userType, prompts) => {
+                                handleReanalyze(userType, prompts);
+                                setShowPromptEditor(false);
+                            }}
                         />
                     )}
                 </AnimatePresence>
-            </div>
-        </div>
+            </div >
+        </div >
     );
 }
 
-// Participant Identification View
+
 // Participant Identification View
 function ParticipantIdentificationView({
     participants,
     loading,
-    onStartAnalysis,
-    onStartQuickAnalysis
+    onContinue
 }: {
     participants: Participant[];
     loading: boolean;
-    onStartAnalysis: () => void;
-    onStartQuickAnalysis: () => void;
+    onContinue: () => void;
 }) {
     return (
         <motion.div
@@ -437,7 +551,7 @@ function ParticipantIdentificationView({
                             זיהינו {participants.length} משתתפים
                         </p>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {participants.map((p, i) => (
+                            {participants.map((p: any, i: number) => (
                                 <div key={i} className="bg-white border border-cyan-300 rounded-xl p-4 text-center">
                                     <div className="text-4xl mb-2">👤</div>
                                     <h4 className="font-bold text-gray-800">{p.name}</h4>
@@ -456,19 +570,10 @@ function ParticipantIdentificationView({
                         <motion.button
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}
-                            onClick={onStartAnalysis}
+                            onClick={onContinue}
                             className="px-8 py-4 bg-gradient-to-l from-cyan-500 to-orange-500 text-white rounded-xl font-bold text-lg hover:from-cyan-600 hover:to-orange-600 transition-all shadow-lg"
                         >
-                            🧠 ניתוח מעמיק
-                        </motion.button>
-
-                        <motion.button
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            onClick={onStartQuickAnalysis}
-                            className="px-8 py-4 bg-white border-2 border-purple-500 text-purple-600 rounded-xl font-bold text-lg hover:bg-purple-50 transition-all shadow-lg flex items-center gap-2"
-                        >
-                            ⚡ ניתוח בזק
+                            המשך להתאמת הדוח ➡️
                         </motion.button>
                     </div>
                 </>
@@ -478,26 +583,82 @@ function ParticipantIdentificationView({
 }
 
 // Analyzing View
-function AnalyzingView({ loading, error, onRetry, isQuick = false }: { loading: boolean; error: string | null; onRetry: () => void; isQuick?: boolean }) {
+function AnalyzingView({
+    loading,
+    error,
+    status,
+    onRetry,
+    isQuick = false,
+    currentStep,
+    progress
+}: {
+    loading: boolean;
+    error: string | null;
+    status?: string;
+    onRetry: () => void;
+    isQuick?: boolean;
+    currentStep?: string;
+    progress?: number;
+}) {
     if (error) {
+        const isOverloaded = error === 'SERVER_OVERLOADED' || error.includes('503');
+        const isRecitation = error === 'RECITATION_ERROR' || error.includes('RECITATION');
+        const isSafety = error === 'SAFETY_ERROR' || error.includes('SAFETY');
+
+        let errorTitle = 'שגיאה בניתוח';
+        let errorMessage = 'שגיאה בניתוח הוידאו. אנא נסה שנית.';
+        let errorIcon = '❌';
+
+        if (isOverloaded) {
+            errorTitle = 'השרת עמוס כרגע';
+            errorMessage = 'אנחנו חווים עומס חריג. אנא נסו שוב בעוד דקה.';
+            errorIcon = '⏳';
+        } else if (isRecitation) {
+            errorTitle = 'שגיאת זכויות יוצרים';
+            errorMessage = 'אמה ניסתה לצטט מקורות אקדמיים מוגנים. המערכת חסמה את התשובה כדי להגן על זכויות יוצרים. אנא נסו שוב (לרוב זה מסתדר בניסיון שני).';
+            errorIcon = '©️';
+        } else if (isSafety) {
+            errorTitle = 'חסימת בטיחות';
+            errorMessage = 'התוכן זוהה כלא בטוח או מפר מדיניות שימוש. אנא בדקו את הסרטון.';
+            errorIcon = '🛡️';
+        } else {
+            // Default: Show the raw error message to help the user understand what went wrong
+            errorMessage = `שגיאה: ${error}`;
+        }
+
         return (
             <motion.div
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 className="bg-white rounded-3xl p-12 text-center"
             >
-                <div className="text-8xl mb-6">❌</div>
-                <h2 className="text-3xl font-bold text-gray-800 mb-4">שגיאה בניתוח</h2>
-                <p className="text-gray-700 text-lg mb-6" dir="rtl">{error}</p>
-                <p className="text-gray-600 text-sm mb-8">בדוק את ה-Console (F12) לפרטים נוספים</p>
-                <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={onRetry}
-                    className="px-8 py-4 bg-gradient-to-l from-cyan-500 to-orange-500 text-white rounded-xl font-bold hover:from-cyan-600 hover:to-orange-600 transition-all shadow-lg"
-                >
-                    🔄 נסה שוב
-                </motion.button>
+                <div className="text-8xl mb-6">{errorIcon}</div>
+                <h2 className="text-3xl font-bold text-gray-800 mb-4">
+                    {errorTitle}
+                </h2>
+                <p className="text-xl text-gray-600 mb-8 max-w-md mx-auto">
+                    {errorMessage}
+                </p>
+                <div className="flex justify-center gap-4">
+                    <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={onRetry}
+                        className="px-8 py-4 bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-xl font-bold text-lg shadow-lg flex items-center gap-2"
+                    >
+                        <span>🔄</span> נסה שוב
+                    </motion.button>
+                    {!isQuick && (
+                        <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => window.location.reload()}
+                            className="px-8 py-4 bg-gray-100 text-gray-700 rounded-xl font-bold text-lg hover:bg-gray-200 transition-all"
+                        >
+                            חזרה להתחלה
+                        </motion.button>
+                    )}
+                </div>
             </motion.div>
         );
     }
@@ -506,23 +667,81 @@ function AnalyzingView({ loading, error, onRetry, isQuick = false }: { loading: 
         <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white rounded-3xl p-12 text-center"
+            className="bg-white rounded-3xl p-12 text-center max-w-2xl mx-auto"
         >
-            <div className="animate-pulse text-8xl mb-6">🧠</div>
-            <h2 className="text-3xl font-bold text-gray-800 mb-4">{isQuick ? 'מבצע ניתוח בזק...' : 'מבצע ניתוח מעמיק...'}</h2>
-            <p className="text-gray-600 text-lg mb-6">
-                {isQuick ? 'Gemini Flash מבצע סריקה מהירה של הסרטון' : 'Gemini AI מנתח את הסרטון לפי הפרומפטים המותאמים אישית שלך'}
-            </p>
-            <div className="flex justify-center">
-                <div className="w-64 h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div className="relative w-32 h-32 mx-auto mb-8">
+                {/* Outer glow pulse */}
+                <motion.div
+                    className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 via-purple-500 to-pink-500 opacity-20 blur-xl"
+                    animate={{
+                        scale: [1, 1.2, 1],
+                        opacity: [0.2, 0.4, 0.2]
+                    }}
+                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                />
+
+                {/* Middle rotating ring */}
+                <motion.div
+                    className="absolute inset-2 rounded-full border-4 border-transparent bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 bg-clip-border"
+                    style={{
+                        background: 'linear-gradient(white, white) padding-box, linear-gradient(135deg, #06b6d4, #a855f7, #ec4899) border-box'
+                    }}
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                />
+
+                {/* Inner core orb */}
+                <motion.div
+                    className="absolute inset-6 rounded-full bg-gradient-to-br from-cyan-400 via-purple-500 to-pink-600 shadow-2xl"
+                    animate={{
+                        scale: [1, 1.1, 1],
+                    }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+                >
+                    {/* Shine effect */}
+                    <div className="absolute top-2 left-2 w-8 h-8 bg-white/30 rounded-full blur-md"></div>
+                </motion.div>
+
+                {/* Floating particles */}
+                {[...Array(3)].map((_, i) => (
                     <motion.div
-                        className="h-full bg-gradient-to-l from-cyan-500 to-orange-500"
-                        initial={{ width: '0%' }}
-                        animate={{ width: '100%' }}
-                        transition={{ duration: 3, repeat: Infinity }}
+                        key={i}
+                        className="absolute w-2 h-2 bg-cyan-400 rounded-full"
+                        style={{
+                            left: '50%',
+                            top: '50%',
+                        }}
+                        animate={{
+                            x: [0, Math.cos(i * 120 * Math.PI / 180) * 60, 0],
+                            y: [0, Math.sin(i * 120 * Math.PI / 180) * 60, 0],
+                            opacity: [0, 1, 0],
+                        }}
+                        transition={{
+                            duration: 2,
+                            repeat: Infinity,
+                            delay: i * 0.4,
+                            ease: "easeInOut"
+                        }}
                     />
-                </div>
+                ))}
             </div>
+
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                {currentStep || status || (isQuick ? 'מבצע ניתוח בזק...' : 'מבצע ניתוח מעמיק...')}
+            </h2>
+            <p className="text-gray-500 mb-8 text-lg">
+                הניתוח עשוי לקחת מספר דקות - אמה עובדת בשבילך...
+            </p>
+
+            <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden mb-4">
+                <motion.div
+                    className="h-full bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full shadow-lg"
+                    initial={{ width: "0%" }}
+                    animate={{ width: `${progress || 0}%` }}
+                    transition={{ duration: 0.5 }}
+                />
+            </div>
+            <p className="text-xs text-gray-400 font-mono">{Math.round(progress || 0)}%</p>
         </motion.div>
     );
 }
@@ -535,7 +754,11 @@ function ResultsView({
     onReset,
     layoutConfig,
     videoMetadata,
-    userId
+    userId,
+    selectedTiles,
+    videoUrl,
+    onUpdateTiles,
+    onShowPromptEditor
 }: {
     result: AnalysisResult;
     currentUserType: string;
@@ -544,9 +767,13 @@ function ResultsView({
     layoutConfig: string[];
     videoMetadata: { duration: string; size: string; resolution: string; format: string; } | null;
     userId?: string;
+    selectedTiles: ReportTileType[];
+    videoUrl: string | null;
+    onUpdateTiles: (tiles: ReportTileType[]) => void;
+    onShowPromptEditor: () => void;
 }) {
-    const [showPromptEditor, setShowPromptEditor] = useState(false);
     const [showCostsModal, setShowCostsModal] = useState(false);
+    const [showCustomization, setShowCustomization] = useState(false);
 
     const userTypeLabels: Record<string, string> = {
         family: 'בית (משפחה)',
@@ -554,82 +781,7 @@ function ResultsView({
         kindergarten: 'מוסדי (גן ילדים)'
     };
 
-    const renderWindowContent = (type: string) => {
-        switch (type) {
-            case 'emotion_graph':
-                return result.emotion_timeline && result.emotion_timeline.length > 0 ? (
-                    <EmotionTimelineChart data={result.emotion_timeline} />
-                ) : <div className="text-gray-400 text-center p-4">אין נתונים לגרף רגשות</div>;
-            case 'event_timeline':
-                return result.forensic_layer.timeline_events && result.forensic_layer.timeline_events.length > 0 ? (
-                    <EventTimeline events={result.forensic_layer.timeline_events} />
-                ) : <div className="text-gray-400 text-center p-4">אין נתונים לציר זמן</div>;
-            case 'interaction_heatmap':
-                return result.interactions && result.interactions.length > 0 ? (
-                    <InteractionHeatmap
-                        interactions={result.interactions}
-                        participantNames={Object.keys(result.psychological_layer.emotional_states || {})}
-                    />
-                ) : <div className="text-gray-400 text-center p-4">אין נתונים למפת חום</div>;
-            case 'interpretations':
-                return (
-                    <div className="h-full overflow-y-auto">
-                        <h4 className="font-bold mb-2">🧠 פרשנויות:</h4>
-                        <ul className="space-y-2 text-sm">
-                            {result.psychological_layer.interpretations.map((item, i) => (
-                                <li key={i} className="bg-purple-50 p-2 rounded border-r-2 border-purple-300 text-gray-800">{item}</li>
-                            ))}
-                        </ul>
-                    </div>
-                );
-            case 'dynamics':
-                return (
-                    <div className="h-full overflow-y-auto">
-                        <h4 className="font-bold mb-2">🔄 דינמיקה:</h4>
-                        <ul className="space-y-2 text-sm">
-                            {result.psychological_layer.relationship_dynamics.map((item, i) => (
-                                <li key={i} className="bg-green-50 p-2 rounded border-r-2 border-green-300 text-gray-800">{item}</li>
-                            ))}
-                        </ul>
-                    </div>
-                );
-            case 'risk_factors':
-                return (
-                    <div className="h-full overflow-y-auto">
-                        <h4 className="font-bold mb-2">🛡️ גורמי סיכון:</h4>
-                        <ul className="space-y-2 text-sm">
-                            {result.safety_layer.risk_factors.map((item, i) => (
-                                <li key={i} className="bg-red-50 p-2 rounded border-r-2 border-red-300 text-gray-800">{item}</li>
-                            ))}
-                        </ul>
-                    </div>
-                );
-            case 'facts':
-                return (
-                    <div className="h-full overflow-y-auto">
-                        <h4 className="font-bold mb-2">📋 עובדות:</h4>
-                        <ul className="space-y-2 text-sm">
-                            {result.forensic_layer.facts.map((item, i) => (
-                                <li key={i} className="bg-gray-50 p-2 rounded border-r-2 border-gray-300 text-gray-800">{item}</li>
-                            ))}
-                        </ul>
-                    </div>
-                );
-            case 'observations':
-                return (
-                    <div className="h-full overflow-y-auto">
-                        <h4 className="font-bold mb-2">👀 תצפיות:</h4>
-                        <ul className="space-y-2 text-sm">
-                            {result.forensic_layer.observations.map((item, i) => (
-                                <li key={i} className="bg-blue-50 p-2 rounded border-r-2 border-blue-300 text-gray-800">{item}</li>
-                            ))}
-                        </ul>
-                    </div>
-                );
-            default:
-                return null;
-        }
-    };
+    const isTileSelected = (tile: ReportTileType) => selectedTiles.includes(tile);
 
     return (
         <>
@@ -638,98 +790,115 @@ function ResultsView({
                 animate={{ scale: 1, opacity: 1 }}
                 className="space-y-6"
             >
-                {/* Header - Reused in QuickResultsView */}
+                {/* Header */}
                 <ResultsHeader
                     title="📊 דוח ניתוח מתקדם"
                     currentUserType={currentUserType}
                     userTypeLabels={userTypeLabels}
                     onShowCosts={() => setShowCostsModal(true)}
-                    onShowPromptEditor={() => setShowPromptEditor(true)}
+                    onShowPromptEditor={onShowPromptEditor}
                     onReset={onReset}
                     isQuick={false}
+                    onCustomize={() => setShowCustomization(true)}
                 />
 
-                {/* 1. Case Description (Objective) */}
-                <div className="bg-white rounded-3xl p-8 shadow-sm border-r-4 border-gray-400">
-                    <h3 className="text-xl font-bold text-gray-800 mb-3">📄 תיאור מקרה (אובייקטיבי)</h3>
-                    <p className="text-gray-700 leading-relaxed">
-                        {result.forensic_layer.case_description || "לא התקבל תיאור מקרה."}
-                    </p>
-                    <FeedbackComponent
-                        section="case_description"
-                        contextData={result.forensic_layer.case_description}
+                {/* 1. Video Player & Timeline (New) */}
+                {isTileSelected('video_player') && videoUrl && (
+                    <VideoAnalysisPlayer
+                        videoUrl={videoUrl}
+                        timeline={result.forensic_layer.timeline_events?.map((e: any) => ({
+                            timestamp: e.timestamp,
+                            description: e.event,
+                            safety_level: 'safe', // Defaulting as deep analysis might not have this exact field yet, or map it
+                            emotion_score: 5 // Default
+                        })) || []}
                     />
-                </div>
+                )}
 
-                {/* 2. Participants & Environment */}
-                <div className="grid md:grid-cols-2 gap-6">
-                    <div className="bg-white rounded-3xl p-6 shadow-sm">
-                        <h3 className="text-lg font-bold text-gray-800 mb-3">👥 משתתפים ותפקידים</h3>
-                        <div className="space-y-3">
-                            {result.psychological_layer.participant_analysis?.map((p, i) => (
-                                <div key={i} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
-                                    <div>
-                                        <span className="font-bold text-gray-800">{p.name}</span>
-                                        <span className="text-xs text-gray-500 mr-2">({p.role})</span>
+                {/* 2. Case Description */}
+                {isTileSelected('case_description') && (
+                    <div className="bg-white rounded-3xl p-8 shadow-sm border-r-4 border-gray-400">
+                        <h3 className="text-xl font-bold text-gray-800 mb-3">📄 תיאור מקרה (אובייקטיבי)</h3>
+                        <p className="text-gray-700 leading-relaxed">
+                            {result.forensic_layer.case_description || "לא התקבל תיאור מקרה."}
+                        </p>
+                        <FeedbackComponent
+                            section="case_description"
+                            contextData={result.forensic_layer.case_description}
+                        />
+                    </div>
+                )}
+
+                {/* 3. Participants */}
+                {isTileSelected('participants') && (
+                    <div className="grid md:grid-cols-2 gap-6">
+                        <div className="bg-white rounded-3xl p-6 shadow-sm">
+                            <h3 className="text-lg font-bold text-gray-800 mb-3">👥 משתתפים ותפקידים</h3>
+                            <div className="space-y-3">
+                                {result.psychological_layer.participant_analysis?.map((p: any, i: number) => (
+                                    <div key={i} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
+                                        <div>
+                                            <span className="font-bold text-gray-800">{p.name}</span>
+                                            <span className="text-xs text-gray-500 mr-2">({p.role})</span>
+                                        </div>
                                     </div>
-                                </div>
-                            )) || <p className="text-gray-500">אין מידע על משתתפים</p>}
+                                )) || <p className="text-gray-500">אין מידע על משתתפים</p>}
+                            </div>
+                        </div>
+                        <div className="bg-white rounded-3xl p-6 shadow-sm">
+                            <h3 className="text-lg font-bold text-gray-800 mb-3">📍 סביבת האירוע</h3>
+                            <p className="text-gray-700">
+                                {result.forensic_layer.environment || "לא התקבל תיאור סביבה."}
+                            </p>
                         </div>
                     </div>
-                    <div className="bg-white rounded-3xl p-6 shadow-sm">
-                        <h3 className="text-lg font-bold text-gray-800 mb-3">📍 סביבת האירוע</h3>
-                        <p className="text-gray-700">
-                            {result.forensic_layer.environment || "לא התקבל תיאור סביבה."}
-                        </p>
-                    </div>
-                </div>
+                )}
 
-                <div className="bg-white rounded-3xl p-6 shadow-sm">
-                    <FeedbackComponent
-                        section="participants_environment"
-                        contextData={`Environment: ${result.forensic_layer.environment}\nParticipants: ${result.psychological_layer.participant_analysis?.map(p => `${p.name} (${p.role})`).join(', ')}`}
-                    />
-                </div>
-
-                {/* 3. Deep Interaction Analysis */}
-                <div className="bg-white rounded-3xl p-8 shadow-sm">
-                    <h3 className="text-xl font-bold text-gray-800 mb-4">🧩 ניתוח אינטראקציה עמוק</h3>
-                    <div className="grid gap-4">
-                        {result.psychological_layer.participant_analysis?.map((p, i) => (
-                            <div key={i} className="bg-gradient-to-l from-blue-50 to-transparent p-4 rounded-xl border border-blue-100">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <span className="font-bold text-lg text-blue-800">{p.name}</span>
-                                    <span className="text-xs bg-white px-2 py-1 rounded-full border border-blue-200">{p.role}</span>
-                                </div>
-                                <div className="grid md:grid-cols-3 gap-4 text-sm">
-                                    <div>
-                                        <span className="font-bold text-gray-600 block mb-1">פעולות:</span>
-                                        <span className="text-gray-700">{p.actions}</span>
+                {/* 4. Heatmap (Interaction Analysis) */}
+                {isTileSelected('heatmap') && (
+                    <div className="bg-white rounded-3xl p-8 shadow-sm">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">🧩 ניתוח אינטראקציה עמוק</h3>
+                        <div className="grid gap-4">
+                            {result.psychological_layer.participant_analysis?.map((p: any, i: number) => (
+                                <div key={i} className="bg-gradient-to-l from-blue-50 to-transparent p-4 rounded-xl border border-blue-100">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="font-bold text-lg text-blue-800">{p.name}</span>
+                                        <span className="text-xs bg-white px-2 py-1 rounded-full border border-blue-200">{p.role}</span>
                                     </div>
-                                    <div>
-                                        <span className="font-bold text-gray-600 block mb-1">רגשות:</span>
-                                        <span className="text-gray-700">{p.feelings}</span>
-                                    </div>
-                                    <div>
-                                        <span className="font-bold text-gray-600 block mb-1">הקשר:</span>
-                                        <span className="text-gray-700">{p.context}</span>
+                                    <div className="grid md:grid-cols-3 gap-4 text-sm">
+                                        <div>
+                                            <span className="font-bold text-gray-600 block mb-1">פעולות:</span>
+                                            <span className="text-gray-700">{p.actions}</span>
+                                        </div>
+                                        <div>
+                                            <span className="font-bold text-gray-600 block mb-1">רגשות:</span>
+                                            <span className="text-gray-700">{p.feelings}</span>
+                                        </div>
+                                        <div>
+                                            <span className="font-bold text-gray-600 block mb-1">הקשר:</span>
+                                            <span className="text-gray-700">{p.context}</span>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        )) || <p className="text-gray-500">אין ניתוח אינטראקציה זמין</p>}
-                    </div>
-                    <FeedbackComponent
-                        section="interaction_analysis"
-                        contextData={JSON.stringify(result.psychological_layer.participant_analysis, null, 2)}
-                    />
-                </div>
+                            )) || <p className="text-gray-500">אין ניתוח אינטראקציה זמין</p>}
+                        </div>
 
-                {/* 4. Recommendations */}
-                {result.recommendations && result.recommendations.length > 0 && (
+                        {/* Actual Heatmap Component if available in data */}
+                        {result.interactions && result.interactions.length > 0 && (
+                            <InteractionHeatmap
+                                interactions={result.interactions}
+                                participantNames={Object.keys(result.psychological_layer.emotional_states || {})}
+                            />
+                        )}
+                    </div>
+                )}
+
+                {/* 5. Recommendations */}
+                {isTileSelected('recommendations') && result.recommendations && result.recommendations.length > 0 && (
                     <div className="bg-white rounded-3xl p-8 shadow-sm border-r-4 border-yellow-400">
                         <h3 className="text-xl font-bold text-gray-800 mb-4">💡 3 המלצות מובילות</h3>
                         <div className="grid md:grid-cols-3 gap-4">
-                            {result.recommendations.slice(0, 3).map((rec, i) => (
+                            {result.recommendations.slice(0, 3).map((rec: any, i: number) => (
                                 <div key={i} className="bg-yellow-50 p-4 rounded-xl">
                                     <h4 className="font-bold mb-2 flex items-center gap-2">
                                         {rec.icon} {rec.title}
@@ -745,152 +914,70 @@ function ResultsView({
                     </div>
                 )}
 
-                {/* 5. Dynamic Dashboard (Drag & Drop) */}
-                <DraggableDashboard result={result} currentUserType={currentUserType} />
+                {/* 6. Emotion Graph */}
+                {isTileSelected('emotion_graph') && result.emotion_timeline && result.emotion_timeline.length > 0 && (
+                    <div className="bg-white rounded-3xl p-8 shadow-sm">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">📈 גרף רגשות</h3>
+                        <EmotionTimelineChart data={result.emotion_timeline} />
+                    </div>
+                )}
+
+                {/* 7. Intervention Plan (Using Recommendations/Draggable Dashboard logic) */}
+                {isTileSelected('intervention_plan') && (
+                    <div className="bg-white rounded-3xl p-8 shadow-sm border-r-4 border-green-500">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">📋 תוכנית התערבות</h3>
+                        <p className="text-gray-600 mb-4">תוכנית עבודה מוצעת על בסיס הניתוח:</p>
+                        {/* Placeholder for specific intervention plan logic - reusing recommendations for now */}
+                        <div className="space-y-4">
+                            {result.recommendations?.map((rec: any, i: number) => (
+                                <div key={i} className="flex items-start gap-3 bg-green-50 p-4 rounded-xl">
+                                    <span className="text-2xl">{rec.icon}</span>
+                                    <div>
+                                        <h4 className="font-bold text-gray-800">{rec.title}</h4>
+                                        <p className="text-sm text-gray-700 mt-1">{rec.explanation}</p>
+                                        <div className="mt-2 text-xs bg-white/50 p-2 rounded text-green-800">
+                                            <strong>למה זה יעבוד?</strong> {rec.why_it_works}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* 8. EMMA Chat (Placeholder) */}
+                {isTileSelected('emma_chat') && (
+                    <div className="bg-white rounded-3xl p-8 shadow-sm border-r-4 border-indigo-500">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">👩‍💼 שיח עם אמה</h3>
+                        <div className="bg-indigo-50 p-6 rounded-xl text-center">
+                            <p className="text-indigo-800 font-medium">אמה זמינה לשיחה על הניתוח.</p>
+                            <button className="mt-4 px-6 py-2 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors">
+                                התחל צ'אט
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Legacy Dashboard (Optional - maybe hide if using tiles?) */}
+                {/* <DraggableDashboard result={result} currentUserType={currentUserType} /> */}
 
             </motion.div >
 
-            {/* Prompt Editor Modal */}
-            < PromptEditorModal
-                isOpen={showPromptEditor}
-                onClose={() => setShowPromptEditor(false)
-                }
-                currentUserType={currentUserType}
-                onReanalyze={onReanalyze}
-            />
-
-            <AnalysisCostsModal
-                isOpen={showCostsModal}
-                onClose={() => setShowCostsModal(false)}
-                videoData={videoMetadata || undefined}
-                usageMetadata={result.usageMetadata}
-                detailedCost={result.detailedCost}
-            />
-        </>
-    );
-}
-
-
-
-// ... (existing imports)
-
-// Quick Results View
-function QuickResultsView({
-    result,
-    currentUserType,
-    onReset,
-    videoMetadata,
-    userId // Add userId prop
-}: {
-    result: { description: string; recommendation: Recommendation; usageMetadata?: any; detailedCost?: DetailedCost[] };
-    currentUserType: string;
-    onReset: () => void;
-    videoMetadata: any;
-    userId: string;
-}) {
-    const [showCostsModal, setShowCostsModal] = useState(false);
-    const [showAddAnalysis, setShowAddAnalysis] = useState(false);
-    const [customAnalyses, setCustomAnalyses] = useState<{ id: string; content: string; title: string }[]>([]);
-
-    const userTypeLabels: Record<string, string> = {
-        family: 'בית (משפחה)',
-        caregiver: 'מטפל מקצועי',
-        kindergarten: 'מוסדי (גן ילדים)'
-    };
-
-    const handleAnalysisComplete = (content: string, title: string) => {
-        setCustomAnalyses(prev => [...prev, { id: Date.now().toString(), content, title }]);
-    };
-
-    const handleRemoveAnalysis = (id: string) => {
-        setCustomAnalyses(prev => prev.filter(a => a.id !== id));
-    };
-
-    return (
-        <>
-            <motion.div
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="space-y-6"
-            >
-                {/* Header */}
-                <ResultsHeader
-                    title="⚡ דוח ניתוח בזק"
-                    currentUserType={currentUserType}
-                    userTypeLabels={userTypeLabels}
-                    onShowCosts={() => setShowCostsModal(true)}
-                    onShowPromptEditor={() => { }} // No prompt editor for quick analysis
-                    onReset={onReset}
-                    isQuick={true}
-                />
-
-                {/* 1. Description */}
-                <div className="bg-white rounded-3xl p-8 shadow-sm border-r-4 border-purple-500">
-                    <h3 className="text-xl font-bold text-gray-800 mb-3">📝 תיאור כללי</h3>
-                    <p className="text-gray-800 text-lg leading-relaxed whitespace-pre-wrap">
-                        {result.description}
-                    </p>
-                    <FeedbackComponent
-                        section="quick_description"
-                        contextData={result.description}
-                    />
-                </div>
-
-                {/* 2. Recommendation */}
-                <div className="bg-white rounded-3xl p-8 shadow-sm border-r-4 border-yellow-400">
-                    <h3 className="text-xl font-bold text-gray-800 mb-4">💡 המלצה לפעולה</h3>
-                    <div className="bg-yellow-50 p-6 rounded-2xl">
-                        <h4 className="font-bold text-xl mb-3 flex items-center gap-2 text-gray-900">
-                            {result.recommendation.icon} {result.recommendation.title}
-                        </h4>
-                        <p className="text-gray-800 text-lg mb-4">{result.recommendation.explanation}</p>
-                        <div className="bg-white/50 p-4 rounded-xl">
-                            <span className="font-bold text-gray-600 block mb-1 text-sm">למה זה יעבוד?</span>
-                            <p className="text-gray-700 text-sm">{result.recommendation.why_it_works}</p>
-                        </div>
-                    </div>
-                    <FeedbackComponent
-                        section="quick_recommendation"
-                        contextData={`Title: ${result.recommendation.title}\nExplanation: ${result.recommendation.explanation}\nWhy it works: ${result.recommendation.why_it_works}`}
-                    />
-                </div>
-
-                {/* Add Analysis Button */}
-                <div className="flex justify-center mt-8">
-                    <button
-                        onClick={() => setShowAddAnalysis(true)}
-                        className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-full font-bold shadow-lg hover:shadow-xl hover:scale-105 transition-all"
-                    >
-                        <span className="text-2xl">✨</span>
-                        הוסף ניתוח מתקדם
-                    </button>
-                </div>
-
-                {/* Custom Analyses (Inline) */}
-                <div className="space-y-8">
-                    {customAnalyses.map((analysis) => (
-                        <CustomEditor
-                            key={analysis.id}
-                            initialContent={analysis.content}
-                            title={analysis.title}
-                            userId={userId}
-                            onClose={() => handleRemoveAnalysis(analysis.id)}
-                            variant="inline"
-                            onAddAnalysis={() => setShowAddAnalysis(true)}
+            {/* Customization Modal */}
+            <AnimatePresence>
+                {showCustomization && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                        <ReportCustomizationSelector
+                            initialSelection={selectedTiles}
+                            onComplete={(tiles) => {
+                                onUpdateTiles(tiles);
+                                setShowCustomization(false);
+                            }}
+                            onCancel={() => setShowCustomization(false)}
                         />
-                    ))}
-                </div>
-
-            </motion.div>
-
-            <AddAnalysisModal
-                isOpen={showAddAnalysis}
-                onClose={() => setShowAddAnalysis(false)}
-                onAnalysisComplete={handleAnalysisComplete}
-                videoData={videoMetadata}
-                initialAnalysis={result}
-                existingAnalyses={customAnalyses}
-            />
+                    </div>
+                )}
+            </AnimatePresence>
 
             <AnalysisCostsModal
                 isOpen={showCostsModal}
@@ -902,7 +989,6 @@ function QuickResultsView({
         </>
     );
 }
-
 
 // Reusable Header Component
 function ResultsHeader({
@@ -912,7 +998,8 @@ function ResultsHeader({
     onShowCosts,
     onShowPromptEditor,
     onReset,
-    isQuick
+    isQuick,
+    onCustomize
 }: {
     title: string;
     currentUserType: string;
@@ -921,6 +1008,7 @@ function ResultsHeader({
     onShowPromptEditor: () => void;
     onReset: () => void;
     isQuick: boolean;
+    onCustomize?: () => void;
 }) {
     return (
         <div className="bg-white rounded-3xl p-6 flex justify-between items-center shadow-sm">
@@ -931,6 +1019,17 @@ function ResultsHeader({
                 </p>
             </div>
             <div className="flex gap-3">
+                {onCustomize && (
+                    <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={onCustomize}
+                        className="px-6 py-3 bg-white border-2 border-indigo-500 text-indigo-600 rounded-xl font-bold hover:bg-indigo-50 transition-all shadow-lg flex items-center gap-2"
+                    >
+                        ✏️ התאם דוח
+                    </motion.button>
+                )}
+
                 <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}

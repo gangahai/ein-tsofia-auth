@@ -1,13 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { UserType } from '@/types/types';
+import { UserType, PromptConfig } from '@/types/types';
 import {
     getDefaultPrompts,
     loadCustomPrompts,
     saveCustomPrompts,
-    resetToDefaults,
-    PromptConfig
+    resetToDefaults
 } from '@/lib/defaultPrompts';
 
 type TabType = 'identity' | 'forensic' | 'psychology' | 'safety';
@@ -98,14 +97,16 @@ export default function PromptManager() {
 
     const handleResetSection = () => {
         const defaults = getDefaultPrompts(userType);
-        setConfig({
-            ...config,
-            sections: {
-                ...config.sections,
-                [activeTab]: defaults.sections[activeTab]
-            }
-        });
-        setHasChanges(true);
+        if (defaults) {
+            setConfig({
+                ...config,
+                sections: {
+                    ...config.sections,
+                    [activeTab]: defaults.sections[activeTab]
+                }
+            });
+            setHasChanges(true);
+        }
     };
 
     return (

@@ -12,18 +12,44 @@ const firebaseConfig = {
     appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim(),
 };
 
-// Initialize Firebase only if not already initialized
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Validate that all required config values are present
+const missingKeys = Object.entries(firebaseConfig)
+    .filter(([key, value]) => !value)
+    .map(([key]) => key);
 
-// Initialize Firebase services
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+let app: any = null;
+let auth: any = null;
+let db: any = null;
 
-// Configure Google provider with specific parameters
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({
-    prompt: 'select_account', // Always show account selector
-});
+if (missingKeys.length > 0) {
+    console.warn('⚠️ Firebase configuration incomplete - running in OFFLINE/MOCK mode');
+    console.warn('   Missing keys:', missingKeys.join(', '));
+    console.warn('   To enable Firebase, add these to your .env.local file');
+} else {
+    try {
+        // Initialize Firebase only if not already initialized
+        app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+
+        // Initialize Firebase services
+        auth = getAuth(app);
+        db = getFirestore(app);
+
+        console.log('✅ Firebase initialized successfully');
+    } catch (error) {
+        console.error('❌ Firebase initialization failed:', error);
+        console.warn('   Running in OFFLINE/MOCK mode');
+    }
+}
+
+// Export services (may be null if Firebase is not configured)
+export { auth, db };
+
+// Configure Google provider with specific parameters (only if auth is available)
+export const googleProvider = auth ? new GoogleAuthProvider() : null;
+if (googleProvider) {
+    googleProvider.setCustomParameters({
+        prompt: 'select_account', // Always show account selector
+    });
+}
 
 export default app;
-

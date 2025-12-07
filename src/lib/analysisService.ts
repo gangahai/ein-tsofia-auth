@@ -100,10 +100,15 @@ export const analysisService = {
      */
     logFeedback: async (feedback: FeedbackLog) => {
         try {
-            await addDoc(collection(db, 'feedback_logs'), {
-                ...feedback,
-                timestamp: Timestamp.now()
-            });
+            // Remove undefined fields (Firestore doesn't allow undefined values)
+            const cleanedFeedback = Object.fromEntries(
+                Object.entries({
+                    ...feedback,
+                    timestamp: Timestamp.now()
+                }).filter(([_, value]) => value !== undefined)
+            );
+
+            await addDoc(collection(db, 'feedback_logs'), cleanedFeedback);
             console.log('✅ Feedback logged successfully');
             // Invalidate cache so new feedback appears immediately
             cachedFeedback = null;

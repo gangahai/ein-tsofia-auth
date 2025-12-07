@@ -1,7 +1,12 @@
 'use client';
 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { EmotionTimelinePoint } from '@/lib/gemini';
+
+interface EmotionTimelinePoint {
+    timestamp: string;
+    timestampSeconds?: number;
+    [key: string]: any; // participant emotion scores
+}
 
 interface EmotionTimelineChartProps {
     data: EmotionTimelinePoint[];
